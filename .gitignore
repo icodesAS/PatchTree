@@ -28,4 +28,3 @@ Thumbs.db
 .playwright-mcp/
 # Project docs and agent instructions (not for GitHub)
 docs/
-AGENTS.md
