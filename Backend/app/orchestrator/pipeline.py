@@ -1,4 +1,5 @@
 """SearchNode fan-out, evaluation, replan, and pipeline orchestration."""
+import ast
 import asyncio
 import logging
 import os
@@ -61,11 +62,29 @@ Provide a unified diff patch that makes the test pass by strictly adhering to th
     ),
 ]
 
-REPLAN_SYSTEM_PROMPT = (
-    "You are a repair strategist. Every patch attempt in the previous round failed. "
-    "Analyze the failures and reply with exactly 4 revised strategies for the next round, "
-    "as numbered lines 1-4, one concise sentence each."
-)
+# Tier-accurate token pricing (USD per token)
+# Nano 30B: $0.10 / 1M tokens ($0.00000010 / token)
+# Super 120B: $0.35 / 1M tokens ($0.00000035 / token)
+# Ultra 550B: $1.20 / 1M tokens ($0.00000120 / token)
+TIER_COST_PER_TOKEN = {
+    "nano": 0.10 / 1_000_000,
+    "super": 0.35 / 1_000_000,
+    "ultra": 1.20 / 1_000_000,
+}
+
+
+def calculate_token_cost(model_name: str | None, tokens_in: int, tokens_out: int) -> float:
+    """Calculate tier-aware USD cost for prompt + completion tokens."""
+    if not model_name or model_name == "none":
+        return 0.0
+    lowered = model_name.lower()
+    if "ultra" in lowered or "550b" in lowered or "253b" in lowered:
+        rate = TIER_COST_PER_TOKEN["ultra"]
+    elif "super" in lowered or "120b" in lowered or "70b" in lowered:
+        rate = TIER_COST_PER_TOKEN["super"]
+    else:
+        rate = TIER_COST_PER_TOKEN["nano"]
+    return round((tokens_in + tokens_out) * rate, 6)
 
 ULTRA_SYNTHESIS_SYSTEM_PROMPT = (
     "You are Nemotron Ultra, the most capable model in the PatchTree pipeline. "
@@ -85,17 +104,100 @@ ADVERSARIAL_SYSTEM_PROMPT = (
 ADVERSARIAL_TEST_FILENAME = "test_adversarial_check.py"
 
 
+def is_reproduction_error(exit_code: int, output: str) -> bool:
+    """Check if test failed due to environment, missing runner, or invalid test command."""
+    if exit_code in (4, 5, 127):
+        return True
+    lowered = (output or "").lower()
+    error_indicators = (
+        "pytest: not found",
+        ": command not found",
+        "file or directory not found",
+        "no tests were found",
+        "collected 0 items",
+        "usageerror",
+        "interrupted: 1 error during collection",
+        "fatal: could not read",
+        "fatal: repository not found",
+        "no such file or directory",
+        "error: file not found",
+    )
+    return any(ind in lowered for ind in error_indicators)
+
+
 def reproduce(run: Run, sandbox: SandboxManager) -> Node:
-    """ReproduceNode: boot sandbox, run target test, record the failing root node."""
-    sandbox.spawn("python:3.11")
+    """ReproduceNode: boot sandbox, prepare repository, run target test, record root node."""
+    repo_url = (run.repo_url or "").strip()
+    sandbox.spawn("python:3.11", repo_url=repo_url)
+
+    # In real sandbox, clone repository into /app if a valid remote URL is provided
+    if not sandbox.stub and repo_url and not any(d in repo_url.lower() for d in ("example.com", "example/")):
+        # If spawn did not clone into /app, do depth 1 clone here
+        check_dir = sandbox.run_command("test -d /app")
+        if check_dir.exit_code != 0:
+            logger.info(f"Cloning {repo_url} into sandbox...")
+            clone_res = sandbox.run_command(f"git clone --depth 1 {repo_url} /app")
+            if clone_res.exit_code != 0:
+                logger.warning(f"Git clone failed for {repo_url}: {clone_res.output}")
+                return Node(
+                    node_id=str(uuid.uuid4()),
+                    run_id=run.run_id,
+                    branch_type="root",
+                    checkpoint_id=sandbox.checkpoint(),
+                    test_command=run.target_test,
+                    test_result="error",
+                    test_output=f"Git clone failed for {repo_url}:\n{clone_res.output}",
+                    status="done",
+                )
+
+        # Search for requirements.txt (root or nested subfolders)
+        find_res = sandbox.run_command("find /app -name '*requirements*.txt' -o -name 'requirements.txt' 2>/dev/null | head -n 1")
+        req_path = find_res.output.strip().splitlines()[0] if find_res.output.strip() else ""
+
+        if not req_path:
+            logger.warning(f"No requirements.txt found in {repo_url}")
+            return Node(
+                node_id=str(uuid.uuid4()),
+                run_id=run.run_id,
+                branch_type="root",
+                checkpoint_id=sandbox.checkpoint(),
+                test_command=run.target_test,
+                test_result="error",
+                test_output="No requirements.txt file found in repository. Please ensure a requirements.txt file exists in the repository root or a subfolder so dependencies can be installed.",
+                status="done",
+            )
+
+        logger.info(f"Installing dependencies from {req_path}...")
+        install_res = sandbox.run_command(f"pip install --prefer-binary --quiet -r '{req_path}'")
+        if install_res.exit_code != 0:
+            logger.warning(f"Dependency installation failed from {req_path}: {install_res.output}")
+            return Node(
+                node_id=str(uuid.uuid4()),
+                run_id=run.run_id,
+                branch_type="root",
+                checkpoint_id=sandbox.checkpoint(),
+                test_command=run.target_test,
+                test_result="error",
+                test_output=f"Dependency installation failed from {req_path}:\n{install_res.output}",
+                status="done",
+            )
+
     result = sandbox.run_command(run.target_test)
+
+    if result.exit_code == 0:
+        test_res = "pass"
+    elif is_reproduction_error(result.exit_code, result.output):
+        test_res = "error"
+    else:
+        test_res = "fail"
+
     return Node(
         node_id=str(uuid.uuid4()),
         run_id=run.run_id,
         branch_type="root",
         checkpoint_id=sandbox.checkpoint(),
         test_command=run.target_test,
-        test_result="fail" if result.exit_code else "pass",
+        test_result=test_res,
         test_output=result.output,
         status="done",
     )
@@ -117,52 +219,7 @@ def evaluate_search(branches: list[Node]) -> Node | None:
     return None
 
 
-def _parse_guidance(content: str) -> list[str]:
-    """Extract up to 4 guidance strings from a replan response."""
-    guidance = [
-        m.group(1).strip()
-        for m in re.finditer(r"(?m)^\s*\d+[.)]\s*(.+?)\s*$", content)
-    ]
-    if not guidance:
-        guidance = [line.strip() for line in content.splitlines() if line.strip()]
-    return guidance[:4]
 
-
-async def replan(run: Run, failed_branches: list[Node]) -> list[str]:
-    """
-    After a failed search round, ask the Ultra tier for revised guidance.
-
-    Concatenates every failed branch's hypothesis, patch, and test output into
-    one prompt so the model can see why each attempt failed.
-
-    Args:
-        run: The Run being repaired.
-        failed_branches: Nodes from the failed round.
-
-    Returns:
-        Up to 4 revised guidance strings, one per branch, for the next round.
-    """
-    attempts = "\n\n".join(
-        f"--- Attempt {i + 1} ---\n"
-        f"hypothesis: {node.hypothesis or ''}\n"
-        f"patch:\n{node.patch_diff or ''}\n"
-        f"test output:\n{node.test_output or ''}"
-        for i, node in enumerate(failed_branches)
-    )
-    prompt = (
-        f"Bug description: {run.bug_description}\n"
-        f"Test command: {run.target_test}\n\n"
-        f"All {len(failed_branches)} patch attempts failed:\n\n{attempts}\n\n"
-        "Propose 4 revised strategies for the next search round."
-    )
-    response = await call_model(
-        job="replan_after_failure",
-        prompt=prompt,
-        system_prompt=REPLAN_SYSTEM_PROMPT,
-    )
-    guidance = _parse_guidance(response["content"])
-    logger.info("Replan produced %d guidance strings", len(guidance))
-    return guidance
 
 
 async def ultra_synthesize_patch(
@@ -195,13 +252,20 @@ async def ultra_synthesize_patch(
         f"pytest failure trace:\n{node.test_output or ''}"
         for i, node in enumerate(failed_branches)
     )
+    source_context = extract_relevant_source_context(
+        sandbox=sandbox,
+        target_test=parent_node.test_command or run.target_test,
+        test_output=failed_branches[0].test_output if failed_branches else "",
+    )
     prompt = (
         f"Bug description: {run.bug_description}\n"
         f"Target test command: {run.target_test}\n\n"
         f"All {len(failed_branches)} patch attempts failed. Here is the full failure context:\n\n"
         f"{attempts}\n\n"
-        "Write the corrected unified diff that fixes this bug, avoiding the mistakes above."
     )
+    if source_context:
+        prompt += f"{source_context}\n\n"
+    prompt += "Write the corrected unified diff that fixes this bug, avoiding the mistakes above."
     node_id = str(uuid.uuid4())
     logger.info(f"Ultra escalation: synthesizing patch directly, node {node_id}")
 
@@ -227,6 +291,7 @@ async def ultra_synthesize_patch(
         test_output = test_result_obj.output
 
     checkpoint_id = fork.checkpoint()
+    cost = calculate_token_cost(response["model"], response["tokens_in"], response["tokens_out"])
     node = Node(
         node_id=node_id,
         run_id=run.run_id,
@@ -241,6 +306,7 @@ async def ultra_synthesize_patch(
         model_used=response["model"],
         tokens_in=response["tokens_in"],
         tokens_out=response["tokens_out"],
+        estimated_cost_usd=cost,
         status="done",
     )
     logger.info(
@@ -264,6 +330,94 @@ def extract_code(content: str) -> str:
     if match:
         return match.group(1).strip()
     return content.strip()
+
+
+def extract_file_paths_from_trace(test_command: str, test_output: str) -> list[str]:
+    """Extract candidate repository file paths mentioned in test command and pytest traceback."""
+    files: list[str] = []
+
+    # 1. From test command (e.g., pytest tests/test_bug.py -> tests/test_bug.py)
+    for part in (test_command or "").split():
+        if part.endswith(".py") and not part.startswith("-"):
+            clean = part.split("::")[0].strip()
+            if clean and clean not in files:
+                files.append(clean)
+
+    # 2. From traceback lines like:
+    # tests/test_bug.py:15: in test_func
+    # src/parser.py:42: in parse
+    # >   assert calc(1) == 2 (tests/test_bug.py:12)
+    matches = re.findall(r"(?:^|[ \t\n\"'\(])([a-zA-Z0-9_\-./]+\.py)(?::\d+)?", test_output or "")
+    for m in matches:
+        clean = m.strip()
+        # Filter out standard library, virtualenvs, and test framework internal paths
+        if any(ign in clean.lower() for ign in (
+            "site-packages", "/usr/lib", "pytest", "pluggy", "_pytest", "unittest", "<string>"
+        )):
+            continue
+        if clean not in files:
+            files.append(clean)
+
+    return files[:4]
+
+
+def extract_relevant_source_context(
+    sandbox: SandboxManager,
+    target_test: str,
+    test_output: str,
+    max_files: int = 3,
+    max_lines: int = 250,
+) -> str:
+    """Read failing source files and AST-detected local dependencies from sandbox."""
+    if sandbox.stub:
+        return ""
+
+    candidate_paths = extract_file_paths_from_trace(target_test, test_output)
+    if not candidate_paths:
+        return ""
+
+    context_blocks: list[str] = []
+    seen_files = set()
+
+    for path in candidate_paths:
+        if path in seen_files or len(seen_files) >= max_files:
+            continue
+
+        read_cmd = f"if [ -f '/app/{path}' ]; then cat '/app/{path}'; elif [ -f '{path}' ]; then cat '{path}'; fi"
+        res = sandbox.run_command(read_cmd)
+        if res.exit_code == 0 and res.output.strip():
+            seen_files.add(path)
+            content = res.output
+            lines = content.splitlines()
+            if len(lines) > max_lines:
+                content = "\n".join(lines[:max_lines]) + f"\n... [{len(lines) - max_lines} more lines truncated] ..."
+
+            context_blocks.append(f"File: `{path}`\n```python\n{content}\n```")
+
+            # Check AST for direct relative or local imports
+            try:
+                tree = ast.parse(res.output)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom) and node.module and len(seen_files) < max_files:
+                        mod_filename = os.path.basename(node.module.replace(".", "/") + ".py")
+                        mod_cmd = f"find /app -name '{mod_filename}' 2>/dev/null | head -n 1"
+                        find_res = sandbox.run_command(mod_cmd)
+                        mod_path = find_res.output.strip()
+                        if mod_path and mod_path not in seen_files:
+                            sub_res = sandbox.run_command(f"cat '{mod_path}'")
+                            if sub_res.exit_code == 0 and sub_res.output.strip():
+                                seen_files.add(mod_path)
+                                sub_lines = sub_res.output.splitlines()
+                                sub_content = "\n".join(sub_lines[:max_lines]) if len(sub_lines) > max_lines else sub_res.output
+                                rel_display = mod_path.replace("/app/", "")
+                                context_blocks.append(f"File: `{rel_display}` (imported dependency)\n```python\n{sub_content}\n```")
+            except Exception:
+                pass
+
+    if not context_blocks:
+        return ""
+
+    return "=== TARGET REPOSITORY SOURCE CONTEXT ===\n" + "\n\n".join(context_blocks) + "\n========================================"
 
 
 async def _execute_branch(
@@ -292,6 +446,14 @@ async def _execute_branch(
     if guidance:
         prompt += f"\n\nRevised guidance from the failed previous round: {guidance}"
 
+    source_context = extract_relevant_source_context(
+        sandbox=parent_sandbox,
+        target_test=parent_node.test_command or run.target_test,
+        test_output=parent_node.test_output or "",
+    )
+    if source_context:
+        prompt += f"\n\n{source_context}"
+
     # Call the model
     model_response = await call_model(job=job, prompt=prompt, temperature=temperature)
 
@@ -315,6 +477,7 @@ async def _execute_branch(
 
     # Create checkpoint after applying patch
     checkpoint_id = fork.checkpoint()
+    cost = calculate_token_cost(model_response["model"], model_response["tokens_in"], model_response["tokens_out"])
 
     node = Node(
         node_id=node_id,
@@ -330,6 +493,7 @@ async def _execute_branch(
         model_used=model_response["model"],
         tokens_in=model_response["tokens_in"],
         tokens_out=model_response["tokens_out"],
+        estimated_cost_usd=cost,
         status="done",
     )
 
@@ -486,6 +650,7 @@ async def check_adversarial(
             return result, fork.checkpoint()
 
         result, checkpoint_id = await asyncio.to_thread(_exec)
+        cost = calculate_token_cost(response["model"], response["tokens_in"], response["tokens_out"])
         return Node(
             node_id=str(uuid.uuid4()),
             run_id=run.run_id,
@@ -499,6 +664,7 @@ async def check_adversarial(
             model_used=response["model"],
             tokens_in=response["tokens_in"],
             tokens_out=response["tokens_out"],
+            estimated_cost_usd=cost,
             status="done",
         )
 
@@ -569,6 +735,8 @@ async def generate_confidence_report(
             f"Summarize what failed, identify the least-bad attempt from the tree, and provide actionable next steps for the engineering team."
         )
     res = await call_model("generate_confidence_report", prompt=prompt)
+    report_cost = calculate_token_cost(res.get("model", "ultra"), res.get("tokens_in", 0), res.get("tokens_out", 0))
+    run.total_cost_usd = round(run.total_cost_usd + report_cost, 6)
     return res["content"]
 
 
@@ -605,6 +773,34 @@ async def run_pipeline(
     root_node = reproduce(run, sandbox)
     all_nodes.append(root_node)
     logger.info(f"Reproduce: root node {root_node.node_id} -> test_result={root_node.test_result}")
+
+    # ── Guard: Stop early if bug reproduction failed or test already passed ───
+    if root_node.test_result != "fail":
+        if root_node.test_result == "pass":
+            msg = (
+                "Target test passed with exit code 0 on the clean repository.\n"
+                "No bug was reproduced to patch. Verify that the target test asserts the buggy behavior."
+            )
+        else:
+            msg = (
+                f"Bug reproduction failed: test command could not be executed or target test was not found.\n\n"
+                f"Output:\n{root_node.test_output}\n\n"
+                f"Verify that the repository URL, test path, and required test runners are correctly specified."
+            )
+        run.status = "failed"
+        run.confidence_score = 0.0
+        run.confidence_report = (
+            f"### PatchTree Reproduction Aborted\n\n"
+            f"**Status:** `{root_node.test_result.upper()}`\n\n"
+            f"**Reason:**\n{msg}\n\n"
+            f"- **Repository:** `{run.repo_url}`\n"
+            f"- **Target Test:** `{run.target_test}`\n\n"
+            f"> [!IMPORTANT]\n"
+            f"> Search fan-out was halted early to protect against unnecessary LLM and compute costs."
+        )
+        run.completed_at = datetime.now(timezone.utc)
+        logger.warning(f"Run {run.run_id} aborted early at reproduce stage: {root_node.test_result}")
+        return run, all_nodes
 
     # ── Round 1: 4-branch concurrent search ───────────────────────────────────
     branches = await search_round(run, root_node, round_num=1, sandbox=sandbox)
@@ -684,7 +880,7 @@ async def run_pipeline(
         run.completed_at = datetime.now(timezone.utc)
         if run.created_at:
             run.total_wall_time_seconds = round((run.completed_at - run.created_at).total_seconds(), 2)
-        run.total_cost_usd = round(sum(n.tokens_in + n.tokens_out for n in all_nodes) * 0.000001, 6)
+        run.total_cost_usd = round(sum(n.estimated_cost_usd for n in all_nodes), 6)
         # 4. Ultra Report
         logger.info("Generating Nemotron Ultra Confidence Report...")
         run.confidence_report = await generate_confidence_report(run, winner, all_nodes)
@@ -697,7 +893,7 @@ async def run_pipeline(
     run.completed_at = datetime.now(timezone.utc)
     if run.created_at:
         run.total_wall_time_seconds = round((run.completed_at - run.created_at).total_seconds(), 2)
-    run.total_cost_usd = round(sum(n.tokens_in + n.tokens_out for n in all_nodes) * 0.000001, 6)
+    run.total_cost_usd = round(sum(n.estimated_cost_usd for n in all_nodes), 6)
     run.confidence_report = await generate_confidence_report(run, None, all_nodes)
     logger.info("Pipeline failed: no passing patch after round 1 + Ultra escalation")
     return run, all_nodes

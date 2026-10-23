@@ -40,6 +40,7 @@ class Node(BaseModel):
     model_used: Optional[str] = None
     tokens_in: int = 0
     tokens_out: int = 0
+    estimated_cost_usd: float = 0.0
     status: str = "pending"
     is_stable: Optional[bool] = None
     stability_runs: int = 0

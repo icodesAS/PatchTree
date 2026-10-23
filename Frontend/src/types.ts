@@ -6,6 +6,7 @@ export interface PatchNode {
   node_id: string;
   run_id: string;
   parent_node_id: string | null;
+  checkpoint_id?: string;
   branch_type: BranchType;
   hypothesis: string;
   patch_diff: string;

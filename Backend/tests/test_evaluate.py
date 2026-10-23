@@ -121,53 +121,6 @@ def test_evaluate_search():
     print("test_evaluate_search: all assertions passed")
 
 
-# ---------- replan ----------
-
-
-async def test_replan():
-    print("\n=== test_replan ===")
-    run = _make_run()
-    failed = [_make_node("fail", run.run_id, tag=f"branch-{i}") for i in range(4)]
-
-    captured: dict = {}
-
-    async def fake_call_model(job: str, prompt: str, system_prompt: str | None = None, temperature: float = 0.3) -> dict:
-        captured["job"] = job
-        captured["prompt"] = prompt
-        captured["system_prompt"] = system_prompt
-        return {
-            "content": "1. Fix the off-by-one in the return statement\n"
-            "2. Refactor the parsing layer instead\n"
-            "3. Patch the caller, not the callee\n"
-            "4. Align the test double with real behavior",
-            "model": "stub/nemotron-ultra",
-            "tokens_in": 100,
-            "tokens_out": 50,
-            "stub": True,
-        }
-
-    original = pipeline.call_model
-    pipeline.call_model = fake_call_model
-    try:
-        guidance = await pipeline.replan(run, failed)
-    finally:
-        pipeline.call_model = original
-
-    assert captured["job"] == "replan_after_failure", f"wrong job: {captured['job']}"
-    print(f"job routed to: {captured['job']}")
-
-    # All 4 failed branch outputs are concatenated into the prompt
-    for i in range(4):
-        assert f"test output branch-{i}" in captured["prompt"], f"prompt missing branch {i} output"
-        assert f"diff branch-{i}" in captured["prompt"], f"prompt missing branch {i} patch"
-    assert run.bug_description in captured["prompt"]
-    print("prompt contains all 4 failed branch outputs: OK")
-
-    assert len(guidance) == 4, f"expected 4 guidance strings, got {len(guidance)}"
-    assert all(isinstance(g, str) and g for g in guidance)
-    print(f"guidance: {guidance}")
-    print("test_replan: all assertions passed")
-
 
 # ---------- run_pipeline ----------
 
@@ -259,12 +212,37 @@ async def test_run_pipeline_honest_failure():
     print("test_run_pipeline_honest_failure: all assertions passed")
 
 
+async def test_run_pipeline_aborts_on_missing_test():
+    print("\n=== test_run_pipeline_aborts_on_missing_test ===")
+    run = _make_run()
+
+    class MissingTestSandbox(SandboxManager):
+        def __init__(self):
+            super().__init__(force_stub=True)
+
+        def run_command(self, cmd: str) -> CommandResult:
+            self._history.append(cmd)
+            return CommandResult(127, "/bin/sh: 1: pytest: not found")
+
+    sandbox = MissingTestSandbox()
+    final_run, all_nodes = await pipeline.run_pipeline(run, sandbox=sandbox)
+
+    assert final_run.status == "failed"
+    assert final_run.winner_node_id is None
+    # Only root node created; 0 search branches dispatched
+    assert len(all_nodes) == 1, f"expected only 1 root node, got {len(all_nodes)}"
+    assert all_nodes[0].test_result == "error"
+    assert "Reproduction Aborted" in (final_run.confidence_report or "")
+    print(f"aborted early: nodes={len(all_nodes)}, root_result={all_nodes[0].test_result}")
+    print("test_run_pipeline_aborts_on_missing_test: all assertions passed")
+
+
 async def _main():
     test_evaluate_search()
-    await test_replan()
     await test_run_pipeline_winner_round_1()
     await test_run_pipeline_ultra_escalation_wins()
     await test_run_pipeline_honest_failure()
+    await test_run_pipeline_aborts_on_missing_test()
     print("\nAll evaluate/replan tests passed!")
 
 

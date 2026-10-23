@@ -25,6 +25,7 @@ Thumbs.db
 .idea/
 **/.vscode/settings.json
 .agents/**
+.playwright-mcp/
 # Project docs and agent instructions (not for GitHub)
 docs/
 AGENTS.md

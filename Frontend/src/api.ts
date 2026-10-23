@@ -1,6 +1,6 @@
 import type { PatchNode, Run, RunCreate } from './types';
 
-const BASE = 'http://localhost:8000';
+const BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 export async function checkHealth(): Promise<boolean> {
   try {
@@ -36,22 +36,54 @@ export async function getTree(runId: string): Promise<PatchNode[]> {
   return res.json();
 }
 
-export async function pollUntilComplete(
+export async function listRuns(): Promise<Run[]> {
+  const res = await fetch(`${BASE}/runs`);
+  if (!res.ok) throw new Error(`GET /runs failed: ${res.status}`);
+  return res.json();
+}
+
+export function pollUntilComplete(
   runId: string,
   onUpdate: (run: Run, nodes: PatchNode[]) => void,
   intervalMs = 1500,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
+  maxConsecutiveErrors = 4,
+): { promise: Promise<void>; cancel: () => void } {
+  let cancelled = false;
+  let timerId: ReturnType<typeof setTimeout> | null = null;
+  let consecutiveErrors = 0;
+
+  const promise = new Promise<void>((resolve, reject) => {
     const tick = async () => {
+      if (cancelled) return resolve();
       try {
         const [run, nodes] = await Promise.all([getRun(runId), getTree(runId)]);
+        if (cancelled) return resolve();
+        consecutiveErrors = 0;
         onUpdate(run, nodes);
-        if (run.status === 'complete' || run.status === 'failed') resolve();
-        else setTimeout(tick, intervalMs);
+        if (run.status === 'complete' || run.status === 'failed') {
+          resolve();
+        } else {
+          timerId = setTimeout(tick, intervalMs);
+        }
       } catch (e) {
-        reject(e);
+        if (cancelled) return resolve();
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          reject(e);
+        } else {
+          const backoff = Math.min(intervalMs * Math.pow(1.5, consecutiveErrors), 6000);
+          timerId = setTimeout(tick, backoff);
+        }
       }
     };
     tick();
   });
+
+  return {
+    promise,
+    cancel: () => {
+      cancelled = true;
+      if (timerId) clearTimeout(timerId);
+    },
+  };
 }

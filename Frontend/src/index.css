@@ -1,3 +1,46 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; background: #0a0e1a; }
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700;800&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-0: #060911;
+  --bg-1: #0b1120;
+  --bg-2: #131b2e;
+  --bg-3: #1e293b;
+  --bg-card: rgba(19, 27, 46, 0.85);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+
+  --text-1: #f8fafc;
+  --text-2: #94a3b8;
+  --text-3: #64748b;
+
+  --accent: #6366f1;
+  --accent-glow: rgba(99, 102, 241, 0.35);
+  --pass: #10b981;
+  --pass-glow: rgba(16, 185, 129, 0.3);
+  --fail: #ef4444;
+  --fail-glow: rgba(239, 68, 68, 0.3);
+  --warning: #f59e0b;
+  --ultra: #a855f7;
+  --ultra-glow: rgba(168, 85, 247, 0.45);
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Fira Code', 'JetBrains Mono', ui-monospace, monospace;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg-0);
+  color: var(--text-1);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

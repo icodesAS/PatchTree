@@ -8,6 +8,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+import os
 from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,10 +17,16 @@ from .orchestrator.pipeline import run_pipeline
 
 logger = logging.getLogger(__name__)
 
+MAX_CONCURRENT_RUNS = int(os.getenv("MAX_CONCURRENT_RUNS", "1"))
+MAX_DAILY_RUNS = int(os.getenv("MAX_DAILY_RUNS", "50"))
+
+cors_origins_raw = os.getenv("ALLOWED_ORIGINS", "*")
+origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+
 app = FastAPI(title="PatchTree API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins if origins else ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -43,6 +50,23 @@ async def _run_pipeline(run: Run) -> None:
 
 @app.post("/runs", response_model=Run, status_code=status.HTTP_201_CREATED)
 async def create_run(request: RunCreate, background_tasks: BackgroundTasks) -> Run:
+    # ── Protection 1: Active In-Flight Concurrency Lock ──
+    active_runs = [r for r in runs.values() if r.status == "running"]
+    if len(active_runs) >= MAX_CONCURRENT_RUNS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="A verification run is currently in progress. Please wait for it to complete.",
+        )
+
+    # ── Protection 4: Daily Budget / Run Cap ──
+    today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_runs = sum(1 for r in runs.values() if r.created_at and r.created_at.strftime("%Y-%m-%d") == today_prefix)
+    if today_runs >= MAX_DAILY_RUNS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Daily demo run limit ({MAX_DAILY_RUNS}) reached for today to prevent cloud budget overruns.",
+        )
+
     run = Run(
         **request.model_dump(),
         run_id=str(uuid4()),

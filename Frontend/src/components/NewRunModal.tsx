@@ -25,12 +25,11 @@ const SAMPLES: { label: string; data: RunCreate }[] = [
 
 interface Props {
   onSubmit: (payload: RunCreate) => void;
-  onDemoMode: () => void;
   onClose: () => void;
   backendOnline: boolean;
 }
 
-export default function NewRunModal({ onSubmit, onDemoMode, onClose, backendOnline }: Props) {
+export default function NewRunModal({ onSubmit, onClose, backendOnline }: Props) {
   const [form, setForm] = useState<RunCreate>({
     repo_url: '',
     bug_description: '',
@@ -54,8 +53,7 @@ export default function NewRunModal({ onSubmit, onDemoMode, onClose, backendOnli
 
         {!backendOnline && (
           <div className="modal__offline-banner">
-            🔴 Backend offline at <code>http://localhost:8000</code>.{' '}
-            <button className="link-btn" onClick={onDemoMode}>Switch to Demo Mode →</button>
+            🔴 Backend offline at <code>{import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}</code>. Start FastAPI server before dispatching runs.
           </div>
         )}
 
