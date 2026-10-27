@@ -253,7 +253,7 @@ ${run.confidence_report || 'No detailed confidence report recorded.'}
                 </div>
               )}
 
-              {run.full_suite_result && (
+              {run.full_suite_result && run.full_suite_result !== 'skipped' && (
                 <div
                   className={`telemetry-pill ${
                     run.full_suite_result === 'pass'
@@ -265,6 +265,12 @@ ${run.confidence_report || 'No detailed confidence report recorded.'}
                   <div className="telemetry-pill__val">
                     {run.full_suite_result === 'pass' ? '✓ PASS' : '✗ FAIL'}
                   </div>
+                </div>
+              )}
+              {run.full_suite_result === 'skipped' && run.full_suite_test && (
+                <div className="telemetry-pill telemetry-pill--neutral">
+                  <div className="telemetry-pill__label">Full Test Suite</div>
+                  <div className="telemetry-pill__val">— SKIPPED</div>
                 </div>
               )}
             </div>

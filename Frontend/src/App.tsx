@@ -1,8 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
-  ReactFlow, Background, Controls, MiniMap,
-  type Node as RFNode, type Edge, type NodeTypes,
-  Handle, Position,
+  ReactFlow, Background, Controls, MiniMap, useReactFlow,
+  type Node as RFNode, type Edge, type NodeTypes, type EdgeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -17,32 +16,39 @@ import NewRunModal from './components/NewRunModal';
 import ReportModal from './components/ReportModal';
 import NodeInspector from './components/NodeInspector';
 import HistorySidebar from './components/HistorySidebar';
+import PNode from './components/PNode';
+import ParticleEdge from './components/ParticleEdge';
+import Launchpad, { type PresetDef } from './components/Launchpad';
 import './App.css';
+import './patchtree-ui.css';
 
 // ── Branch config ─────────────────────────────────────────────────────────────
 const BRANCH_COLORS: Record<string, string> = {
-  root: '#6366f1', search: '#3b82f6', stability: '#10b981',
-  adversarial: '#f59e0b', full_suite: '#8b5cf6',
+  root: '#8b8cf8',
+  search: '#38bdf8',
+  stability: '#10b981',
+  adversarial: '#fb5a3c',
+  full_suite: '#a78bfa',
+  ultra: '#e879f9',
 };
 const BRANCH_LABELS: Record<string, string> = {
-  root: 'Root', search: 'Search', stability: 'Stability',
-  adversarial: 'Adversarial', full_suite: 'Full Suite',
+  root: 'Root',
+  search: 'Search',
+  stability: 'Stability',
+  adversarial: 'Adversarial',
+  full_suite: 'Full Suite',
 };
 
-// ── Pipeline stages ───────────────────────────────────────────────────────────
-const STAGES = [
-  { id: 'root',        label: 'Reproduce Bug' },
-  { id: 'search',      label: 'Search (4 branches)' },
-  { id: 'stability',   label: 'Stability (5 forks)' },
-  { id: 'adversarial', label: 'Adversarial (2 forks)' },
-  { id: 'full_suite',  label: 'Full Suite' },
-  { id: 'report',      label: 'Ultra Report' },
-];
+interface StageItem {
+  id: string;
+  label: string;
+}
 
-function stageFromNodes(nodes: PatchNode[], runStatus: string): number {
+function stageFromNodes(nodes: PatchNode[], runStatus: string, hasFullSuite: boolean): number {
+  const finalStage = hasFullSuite ? 6 : 5;
+  if (runStatus === 'complete' || runStatus === 'failed') return finalStage;
   const types = new Set(nodes.map((n) => n.branch_type));
-  if (runStatus === 'complete' || runStatus === 'failed') return 6;
-  if (types.has('full_suite')) return 5;
+  if (hasFullSuite && types.has('full_suite')) return 5;
   if (types.has('adversarial')) return 4;
   if (types.has('stability')) return 3;
   if (types.has('root')) return 1;
@@ -62,112 +68,22 @@ function getOrCreateClientId(): string {
   }
 }
 
-// ── Custom node card ──────────────────────────────────────────────────────────
-function PatchNodeCard({ data }: { data: Record<string, unknown> }) {
-  const node = data.patchNode as PatchNode;
-  const isWinner = data.isWinner as boolean;
-  const isSelected = data.isSelected as boolean;
-  const color = BRANCH_COLORS[node.branch_type] ?? '#6b7280';
-  const isUltra = (node.model_used ?? '').toLowerCase().includes('ultra');
-
-  const isRunning = node.test_result == null || node.status === 'pending' || node.status === 'running';
-  const isPass = node.test_result === 'pass';
-  const isError = node.test_result === 'error' || node.test_result === 'timeout';
-
-  const modelShort = node.model_used && node.model_used !== 'none'
-    ? node.model_used.split('/').pop()?.slice(0, 24)
-    : 'Base Test Runner';
-
-  const totalTokens = (node.tokens_in ?? 0) + (node.tokens_out ?? 0);
-
-  return (
-    <>
-      <Handle
-        type="target"
-        position={Position.Top}
-        style={{ background: color, border: '2px solid #0b0f19', width: 9, height: 9 }}
-      />
-      <div
-        className={`pnode${isSelected ? ' pnode--selected' : ''}${isWinner ? ' pnode--winner' : ''}${isUltra ? ' pnode--ultra' : ''}${isRunning ? ' pnode--running' : ''}`}
-        style={{ '--branch-color': color } as React.CSSProperties}
-      >
-        {isWinner && <div className="pnode__winner-badge">{isUltra ? '🏆 Winner ⚡ ULTRA' : '🏆 Winner'}</div>}
-        {isUltra && !isWinner && <div className="pnode__ultra-badge">⚡ ULTRA 550B</div>}
-
-        <div className="pnode__header">
-          <div className="pnode__header-left">
-            <span className="pnode__dot" style={{ background: color }} />
-            <span className="pnode__type">{BRANCH_LABELS[node.branch_type]}</span>
-          </div>
-          <span className={`pnode__badge ${
-            isRunning ? 'pnode__badge--running' : isPass ? 'pnode__badge--pass' : isError ? 'pnode__badge--error' : 'pnode__badge--fail'
-          }`}>
-            {isRunning ? (
-              <span className="flex-center"><Loader size={10} className="spin" /> RUNNING</span>
-            ) : isPass ? (
-              '✓ PASS'
-            ) : isError ? (
-              '⚠ ERROR'
-            ) : (
-              '✗ FAIL'
-            )}
-          </span>
-        </div>
-
-        <div className="pnode__content">
-          <div className="pnode__model" title={node.model_used}>
-            {modelShort}
-          </div>
-          {node.hypothesis ? (
-            <div className="pnode__desc" title={node.hypothesis}>
-              {node.hypothesis.split('\n')[0].replace(/^generate_patch_\w+:\s*/, '').slice(0, 50)}
-            </div>
-          ) : (
-            <div className="pnode__desc pnode__desc--subtle">
-              {node.test_command || 'reproduce checkpoint'}
-            </div>
-          )}
-        </div>
-
-        <div className="pnode__footer">
-          {node.branch_type === 'stability' && node.stability_runs != null ? (
-            <div className="pnode__metric pnode__metric--stability">
-              <span>{node.stability_passes}/{node.stability_runs} ✓ Stable</span>
-            </div>
-          ) : node.branch_type === 'adversarial' ? (
-            <div className={`pnode__metric ${isPass ? 'pnode__metric--survived' : 'pnode__metric--broke'}`}>
-              {isRunning ? '⚔️ Probing patch…' : isPass ? '🛡 Survived' : '💥 Broke patch'}
-            </div>
-          ) : (
-            <div className="pnode__metric">
-              {node.branch_type === 'root' ? 'Baseline Bug' : 'Search Hypothesis'}
-            </div>
-          )}
-
-          {totalTokens > 0 && (
-            <div className="pnode__tokens">
-              <Zap size={10} />
-              <span>{totalTokens.toLocaleString()} tok</span>
-            </div>
-          )}
-        </div>
-      </div>
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        style={{ background: color, border: '2px solid #0b0f19', width: 9, height: 9 }}
-      />
-    </>
-  );
-}
-
-const nodeTypes: NodeTypes = { patchNode: PatchNodeCard };
+const nodeTypes: NodeTypes = { patchNode: PNode };
+const edgeTypes: EdgeTypes = { particle: ParticleEdge };
 
 // ── Pipeline stepper ──────────────────────────────────────────────────────────
-function PipelineStepper({ currentStage, elapsed }: { currentStage: number; elapsed: number }) {
+function PipelineStepper({
+  stages,
+  currentStage,
+  elapsed,
+}: {
+  stages: StageItem[];
+  currentStage: number;
+  elapsed: number;
+}) {
   return (
     <div className="stepper">
-      {STAGES.map((s, i) => {
+      {stages.map((s, i) => {
         const done = i < currentStage;
         const active = i === currentStage;
         return (
@@ -176,7 +92,7 @@ function PipelineStepper({ currentStage, elapsed }: { currentStage: number; elap
               {done ? <CheckCircle size={13} /> : active ? <Loader size={13} className="spin" /> : <span>{i + 1}</span>}
             </div>
             <span className="step__label">{s.label}</span>
-            {i < STAGES.length - 1 && <div className="step__line" />}
+            {i < stages.length - 1 && <div className="step__line" />}
           </div>
         );
       })}
@@ -185,6 +101,23 @@ function PipelineStepper({ currentStage, elapsed }: { currentStage: number; elap
       )}
     </div>
   );
+}
+
+function CanvasAutoFit({ runId, nodeCount }: { runId?: string; nodeCount: number }) {
+  const { fitView } = useReactFlow();
+  const prevCount = useRef(0);
+
+  useEffect(() => {
+    if (nodeCount > 0 && (nodeCount !== prevCount.current || nodeCount === 1)) {
+      prevCount.current = nodeCount;
+      const t = setTimeout(() => {
+        fitView({ padding: 0.22, duration: 400 });
+      }, 100);
+      return () => clearTimeout(t);
+    }
+  }, [runId, nodeCount, fitView]);
+
+  return null;
 }
 
 // ── Main App ──────────────────────────────────────────────────────────────────
@@ -200,6 +133,7 @@ export default function App() {
   const [offlineBanner, setOfflineBanner] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [startTs, setStartTs] = useState<number | null>(null);
+  const [initialModalValues, setInitialModalValues] = useState<Partial<RunCreate>>({});
 
   const pollCancelRef = useRef<(() => void) | null>(null);
 
@@ -224,7 +158,9 @@ export default function App() {
       url.searchParams.set('run', runId);
       window.history.replaceState(null, '', url.toString());
       localStorage.setItem('patchtree_active_run_id', runId);
-    } catch {}
+    } catch {
+      /* ignore storage/URL sync errors */
+    }
   }, []);
 
   const loadMock = useCallback(() => {
@@ -273,7 +209,6 @@ export default function App() {
     } catch (err: unknown) {
       console.warn('Failed to load selected run:', err);
       if (err instanceof HttpError && err.status === 404) {
-        // Run not found (e.g. from past reload or stale URL query param)
         try {
           localStorage.removeItem('patchtree_active_run_id');
           const cleanUrl = new URL(window.location.href);
@@ -295,12 +230,37 @@ export default function App() {
     }
   }, [loadMock, syncUrlAndStorage]);
 
-  // Restore run from URL or localStorage on initial mount
+  const resetToHome = useCallback(() => {
+    if (pollCancelRef.current) {
+      pollCancelRef.current();
+      pollCancelRef.current = null;
+    }
+    resetLayoutCache();
+    setRun(null);
+    setPatchNodes([]);
+    setSelectedId(null);
+    try {
+      localStorage.removeItem('patchtree_active_run_id');
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('run');
+      window.history.replaceState(null, '', cleanUrl.pathname);
+    } catch {
+      /* ignore URL/storage cleanup errors */
+    }
+  }, []);
+
+  // Restore run ONLY when explicitly passed in URL query param (?run=...)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const targetId = params.get('run') || localStorage.getItem('patchtree_active_run_id');
+    const targetId = params.get('run');
     if (targetId) {
-      selectRun(targetId);
+      let active = true;
+      (async () => {
+        if (active) await selectRun(targetId);
+      })();
+      return () => {
+        active = false;
+      };
     }
   }, [selectRun]);
 
@@ -315,8 +275,24 @@ export default function App() {
     setStartTs(Date.now());
     setElapsed(0);
     setRun(null);
-    setPatchNodes([]);
-    setSelectedId(null);
+
+    // Instant UI feedback: spawn live placeholder Root node so screen shifts to canvas immediately
+    const initialRootNode: PatchNode = {
+      node_id: 'root-init',
+      run_id: 'pending',
+      parent_node_id: null,
+      branch_type: 'root',
+      hypothesis: `Initializing cloud sandbox for ${payload.repo_url.split('/').slice(-2).join('/')} & executing reproduction test...`,
+      patch_diff: '',
+      test_command: payload.target_test,
+      test_result: null,
+      test_output: 'Sandbox container spawning...\nExecuting reproduction command:\n$ ' + payload.target_test,
+      model_used: 'none',
+      status: 'running',
+    };
+    setPatchNodes([initialRootNode]);
+    setSelectedId('root-init');
+
     try {
       const clientId = getOrCreateClientId();
       const newRun = await createRun({ ...payload, client_id: clientId });
@@ -329,7 +305,7 @@ export default function App() {
       });
       pollCancelRef.current = cancel;
       await promise;
-    } catch (e) {
+    } catch {
       const isOnline = await checkHealth();
       setOfflineBanner(!isOnline);
     } finally {
@@ -339,61 +315,158 @@ export default function App() {
     }
   }, [syncUrlAndStorage]);
 
+  // Determine whether this run includes a full suite command/branch
+  const hasFullSuite = Boolean(
+    run?.full_suite_test ||
+    run?.full_suite_result ||
+    patchNodes.some((n) => n.branch_type === 'full_suite')
+  );
+
+  const stages: StageItem[] = useMemo(() => [
+    { id: 'root',        label: 'Reproduce Bug' },
+    { id: 'search',      label: 'Search (4 branches)' },
+    { id: 'stability',   label: 'Stability (5 forks)' },
+    { id: 'adversarial', label: 'Adversarial (2 forks)' },
+    ...(hasFullSuite ? [{ id: 'full_suite', label: 'Full Suite' }] : []),
+    { id: 'report',      label: 'Ultra Report' },
+  ], [hasFullSuite]);
+
+  // Ancestors of winner for primary golden spine
+  const winnerNodeId = run?.winner_node_id;
+  const winningPathIds = useMemo(() => {
+    if (!winnerNodeId) return new Set<string>();
+    const set = new Set<string>();
+    let curr: string | undefined = winnerNodeId;
+    while (curr) {
+      set.add(curr);
+      const parent = patchNodes.find((p) => p.node_id === curr)?.parent_node_id;
+      curr = parent ?? undefined;
+    }
+    return set;
+  }, [winnerNodeId, patchNodes]);
+
+  // Active verification nodes: root, winning search branch, and all verification tests (stability, adversarial, full_suite)
+  const activeNodeIds = useMemo(() => {
+    if (!winnerNodeId) return new Set(patchNodes.map((n) => n.node_id));
+    const set = new Set<string>();
+    let curr: string | undefined = winnerNodeId;
+    while (curr) {
+      set.add(curr);
+      const parent = patchNodes.find((p) => p.node_id === curr)?.parent_node_id;
+      curr = parent ?? undefined;
+    }
+    for (const n of patchNodes) {
+      if (
+        n.parent_node_id === winnerNodeId ||
+        n.branch_type === 'stability' ||
+        n.branch_type === 'adversarial' ||
+        n.branch_type === 'full_suite'
+      ) {
+        set.add(n.node_id);
+      }
+    }
+    return set;
+  }, [winnerNodeId, patchNodes]);
+
   // Build RF nodes/edges via dagre layout
   const { rfNodes, rfEdges } = useMemo(() => {
     if (patchNodes.length === 0) return { rfNodes: [], rfEdges: [] };
     const layout = computeLayout(patchNodes);
-    const rfNodes: RFNode[] = patchNodes.map((n) => {
+    const hasWinner = Boolean(run?.winner_node_id);
+
+    const rfNodes: RFNode[] = patchNodes.map((n, i) => {
       const pos = layout.get(n.node_id) ?? { x: 0, y: 0 };
+      const isWinner = n.node_id === run?.winner_node_id;
+      const isDimmed = hasWinner && !activeNodeIds.has(n.node_id);
       return {
-        id: n.node_id, type: 'patchNode', position: pos,
-        data: { patchNode: n, isWinner: n.node_id === run?.winner_node_id, isSelected: n.node_id === selectedId },
+        id: n.node_id,
+        type: 'patchNode',
+        position: pos,
+        data: {
+          patchNode: n,
+          isWinner,
+          isSelected: n.node_id === selectedId,
+          isDimmed,
+          index: i,
+        },
         style: { width: NODE_W, height: NODE_H },
       };
     });
+
     const rfEdges: Edge[] = patchNodes
       .filter((n) => n.parent_node_id)
       .map((n) => {
         const isRunning = n.test_result == null || n.status === 'pending' || n.status === 'running';
         const isPass = n.test_result === 'pass';
         const isFail = n.test_result === 'fail';
+        const isWinningEdge =
+          (winningPathIds.has(n.node_id) && winningPathIds.has(n.parent_node_id!)) ||
+          (n.parent_node_id === run?.winner_node_id);
 
-        let strokeColor = BRANCH_COLORS[n.branch_type] ?? 'var(--border-subtle, #334155)';
-        if (isPass) strokeColor = 'var(--pass, #10b981)';
-        else if (isFail) strokeColor = 'var(--fail, #ef4444)';
-        else if (isRunning) strokeColor = 'var(--accent, #6366f1)';
+        let state: 'running' | 'winner' | 'done' | 'failed' | 'idle' = 'idle';
+        if (isWinningEdge && run?.winner_node_id) {
+          state = 'winner';
+        } else if (isRunning) {
+          state = 'running';
+        } else if (isPass) {
+          state = 'done';
+        } else if (isFail) {
+          state = 'failed';
+        }
 
         return {
           id: `e-${n.parent_node_id}-${n.node_id}`,
           source: n.parent_node_id!,
           target: n.node_id,
-          type: 'smoothstep',
-          style: {
-            stroke: strokeColor,
-            strokeWidth: isPass ? 2.5 : 2,
-            filter: isPass
-              ? 'drop-shadow(0 0 4px rgba(16, 185, 129, 0.45))'
-              : isRunning
-              ? 'drop-shadow(0 0 4px rgba(99, 102, 241, 0.4))'
-              : undefined,
-          },
-          animated: isRunning || isPass,
+          type: 'particle',
+          data: { state },
+          className: hasWinner && !activeNodeIds.has(n.node_id) ? 'is-dim' : undefined,
         };
       });
+
     return { rfNodes, rfEdges };
-  }, [patchNodes, selectedId, run?.winner_node_id]);
+  }, [patchNodes, selectedId, run?.winner_node_id, winningPathIds, activeNodeIds]);
 
   const selectedNode = patchNodes.find((n) => n.node_id === selectedId) ?? null;
   const onNodeClick = useCallback((_: unknown, node: RFNode) => {
     setSelectedId((prev) => (prev === node.id ? null : node.id));
   }, []);
-  const currentStage = stageFromNodes(patchNodes, run?.status ?? '');
+  const currentStage = stageFromNodes(patchNodes, run?.status ?? '', hasFullSuite);
+
+  const handleCustomRepo = useCallback((repoUrl: string) => {
+    setInitialModalValues({
+      repo_url: repoUrl,
+      bug_description: '',
+      target_test: 'pytest',
+      full_suite_test: '',
+    });
+    setShowNewRun(true);
+  }, []);
+
+  const handleSimulatePreset = useCallback(() => {
+    loadMock();
+  }, [loadMock]);
+
+  const handleConfigurePreset = useCallback((preset: PresetDef) => {
+    setInitialModalValues({
+      repo_url: preset.repo,
+      bug_description: preset.bugDesc,
+      target_test: preset.testCmd,
+      full_suite_test: preset.fullSuiteCmd || '',
+    });
+    setShowNewRun(true);
+  }, []);
 
   return (
     <div className="app">
       {/* ── Top Bar ── */}
-      <header className="topbar">
-        <div className="topbar__brand">
+      <header className="topbar pt-header" data-run={loading ? 'running' : run?.status === 'complete' ? 'done' : 'idle'}>
+        <div
+          className="topbar__brand"
+          onClick={resetToHome}
+          style={{ cursor: 'pointer' }}
+          title="Return to Launchpad"
+        >
           <GitBranch size={20} className="topbar__icon" />
           <span className="topbar__title">PatchTree</span>
           <span className={`conn-badge ${backendOnline ? 'conn-badge--on' : 'conn-badge--off'}`}>
@@ -431,6 +504,11 @@ export default function App() {
               <Shield size={14} /> View Report
             </button>
           )}
+          {patchNodes.length > 0 && (
+            <button className="btn btn--ghost" onClick={resetToHome} title="Return to Launchpad">
+              ✕ Close Run
+            </button>
+          )}
           <button className="btn btn--primary" onClick={() => setShowNewRun(true)} disabled={loading}>
             <Plus size={14} /> New Run
           </button>
@@ -444,51 +522,54 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Pipeline stepper (only while running) ── */}
+      {/* ── Pipeline stepper (only while running or when nodes present) ── */}
       {(loading || (run && patchNodes.length > 0)) && (
-        <PipelineStepper currentStage={currentStage} elapsed={loading ? elapsed : 0} />
+        <PipelineStepper stages={stages} currentStage={currentStage} elapsed={loading ? elapsed : 0} />
       )}
 
       {/* ── Legend ── */}
       {patchNodes.length > 0 && (
         <div className="legend">
-          {Object.entries(BRANCH_LABELS).map(([type, label]) => (
-            <div key={type} className="legend__item">
-              <span className="legend__dot" style={{ background: BRANCH_COLORS[type] }} />{label}
-            </div>
-          ))}
+          {Object.entries(BRANCH_LABELS)
+            .filter(([type]) => type !== 'full_suite' || hasFullSuite)
+            .map(([type, label]) => (
+              <div key={type} className="legend__item">
+                <span className="legend__dot" style={{ background: BRANCH_COLORS[type] }} />{label}
+              </div>
+            ))}
           <div className="legend__item">
-            <span className="legend__dot legend__dot--animated" />Animated = PASS
+            <span className="legend__dot legend__dot--animated" />Animated = Live Packet
           </div>
         </div>
       )}
 
       {/* ── Canvas ── */}
-      <main className="canvas-wrap">
+      <main className="canvas-wrap pt-canvas" data-run={patchNodes.length === 0 ? 'empty' : loading ? 'running' : 'done'}>
         {patchNodes.length === 0 ? (
-          <div className="empty-state">
-            <GitBranch size={52} className="empty-state__icon" />
-            <h2>No run loaded</h2>
-            {loading ? (
-              <p><Loader size={16} className="spin" /> Pipeline executing…</p>
-            ) : (
-              <p>
-                Click <strong>+ New Run</strong> to initiate an automated patch repair on a GitHub repository,<br />
-                or explore previous executions from <strong>History</strong>.
-              </p>
-            )}
-          </div>
+          <Launchpad
+            onCustomRepo={handleCustomRepo}
+            onSimulatePreset={handleSimulatePreset}
+            onConfigurePreset={handleConfigurePreset}
+          />
         ) : (
           <ReactFlow
-            nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes}
-            onNodeClick={onNodeClick} fitView fitViewOptions={{ padding: 0.15 }}
-            minZoom={0.25} maxZoom={2} proOptions={{ hideAttribution: true }}
+            nodes={rfNodes}
+            edges={rfEdges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onNodeClick={onNodeClick}
+            fitView
+            fitViewOptions={{ padding: 0.18 }}
+            minZoom={0.25}
+            maxZoom={2}
+            proOptions={{ hideAttribution: true }}
           >
-            <Background color="#1e293b" gap={24} />
-            <Controls style={{ background: '#1e293b', borderColor: '#334155' }} />
+            <CanvasAutoFit runId={run?.run_id} nodeCount={rfNodes.length} />
+            <Background color="#151b28" gap={24} />
+            <Controls style={{ background: '#0e121b', borderColor: '#1e2638' }} />
             <MiniMap
               nodeColor={(n) => BRANCH_COLORS[(n.data as { patchNode: PatchNode }).patchNode?.branch_type] ?? '#6b7280'}
-              style={{ background: '#0f172a', borderColor: '#334155' }}
+              style={{ background: '#07090e', borderColor: '#1e2638' }}
             />
           </ReactFlow>
         )}
@@ -508,7 +589,11 @@ export default function App() {
         <NewRunModal
           backendOnline={backendOnline}
           onSubmit={startRun}
-          onClose={() => setShowNewRun(false)}
+          onClose={() => {
+            setShowNewRun(false);
+            setInitialModalValues({});
+          }}
+          initialValues={initialModalValues}
         />
       )}
       {showReport && run && <ReportModal run={run} onClose={() => setShowReport(false)} />}

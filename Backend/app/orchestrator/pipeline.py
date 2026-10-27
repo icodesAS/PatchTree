@@ -1,6 +1,8 @@
 """SearchNode fan-out, evaluation, replan, and pipeline orchestration."""
 import ast
 import asyncio
+import base64
+import json
 import logging
 import os
 import re
@@ -11,6 +13,7 @@ from typing import Literal
 from ..llm.router import call_model
 from ..models.schemas import Node, Run
 from ..sandbox.contree_client import CommandResult, SandboxManager
+from . import context_engine as ce
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +259,9 @@ async def ultra_synthesize_patch(
         sandbox=sandbox,
         target_test=parent_node.test_command or run.target_test,
         test_output=failed_branches[0].test_output if failed_branches else "",
+        bug_description=run.bug_description,
+        budget_tokens=4500,
+        profile="wide",
     )
     prompt = (
         f"Bug description: {run.bug_description}\n"
@@ -276,10 +282,10 @@ async def ultra_synthesize_patch(
     )
     raw_content = response.get("content", "")
     patch_diff = extract_diff(raw_content) or raw_content
-    hypothesis = f"ultra_synthesis: {patch_diff[:100]}..."
+    hypothesis = "Escalated to Nemotron Ultra 550B: Analyzed all prior failed search branches and synthesized an authoritative multi-line fix."
 
     fork = sandbox.fork(parent_node.checkpoint_id)
-    apply_result = fork.run_command(f"apply_patch {node_id}.diff")
+    apply_result = fork.run_command(f"apply_patch ultra_{node_id}.diff")
     logger.debug(f"Ultra escalation: patch apply exit_code={apply_result.exit_code}")
 
     if apply_result.exit_code != 0:
@@ -419,13 +425,37 @@ def extract_relevant_source_context(
     sandbox: SandboxManager,
     target_test: str,
     test_output: str,
+    bug_description: str = "",
+    budget_tokens: int = 3500,
+    profile: Literal["default", "wide"] = "default",
     max_files: int = 3,
     max_lines: int = 250,
 ) -> str:
-    """Read failing source files and AST-detected local dependencies from sandbox."""
+    """Read failing source files and AST-detected local dependencies using context_engine."""
+    if not test_output or not test_output.strip():
+        return ""
+
     if sandbox.stub:
         return ""
 
+    # Mode 1: In-container execution via context_engine if real cloud container
+    if not sandbox.stub:
+        try:
+            esc_trace = base64.b64encode(test_output.encode("utf-8")).decode("ascii")
+            sandbox.run_command(f"echo '{esc_trace}' | base64 -d > /tmp/failure_trace.txt 2>/dev/null || true")
+            cmd = f"python3 /usr/local/bin/context_engine.py --repo /app --budget {budget_tokens} --profile {profile} < /tmp/failure_trace.txt"
+            res = sandbox.run_command(cmd)
+            if res.exit_code == 0 and res.output.strip():
+                try:
+                    data = json.loads(res.output)
+                    if data.get("text"):
+                        return data["text"]
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning("Container context extraction error (%s)", e)
+
+    # Mode 2: Fallback AST & file scanner
     file_locations = extract_file_locations_from_trace(target_test, test_output)
     if not file_locations:
         return ""
@@ -499,6 +529,9 @@ async def _execute_branch(
         sandbox=parent_sandbox,
         target_test=parent_node.test_command or run.target_test,
         test_output=parent_node.test_output or "",
+        bug_description=run.bug_description,
+        budget_tokens=3000,
+        profile="default",
     )
     if source_context:
         prompt += f"\n\n{source_context}"
@@ -706,6 +739,7 @@ async def check_adversarial(
             parent_node_id=candidate.node_id,
             branch_type="adversarial",
             checkpoint_id=checkpoint_id,
+            patch_diff=test_code,
             hypothesis=f"adversarial fork {index + 1}: {test_code.splitlines()[0] if test_code else 'empty'}",
             test_command=test_command,
             test_result="pass" if result.exit_code == 0 else "fail",

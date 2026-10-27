@@ -123,7 +123,7 @@ export default function NodeInspector({ node, onClose }: Props) {
           onClick={() => setActiveTab('diff')}
         >
           <FileCode size={13} />
-          <span>Unified Diff</span>
+          <span>{node.branch_type === 'adversarial' ? 'Adversarial Test Code' : 'Unified Diff'}</span>
         </button>
         <button
           className={`inspector__tab ${activeTab === 'output' ? 'inspector__tab--active' : ''}`}
@@ -146,11 +146,23 @@ export default function NodeInspector({ node, onClose }: Props) {
           <div className="inspector__tab-pane">
             {node.hypothesis && (
               <div className="inspector__section">
-                <div className="inspector__label">Hypothesis & Repair Strategy</div>
+                <div className="inspector__label">
+                  {node.branch_type === 'adversarial' ? 'Adversarial Attack Strategy' : 'Hypothesis & Repair Strategy'}
+                </div>
                 <p className="inspector__text">{node.hypothesis}</p>
               </div>
             )}
-            {node.patch_diff ? (
+            {node.branch_type === 'adversarial' && node.patch_diff ? (
+              <div className="terminal-card">
+                <div className="terminal-card__header">
+                  <span className="terminal-card__title">Generated Adversarial Attack (pytest)</span>
+                  <span className="pnode__badge pnode__badge--fail" style={{ fontSize: '0.65rem' }}>Attack Vector</span>
+                </div>
+                <pre className="terminal-card__body diff-viewer" style={{ color: '#e2e8f0', background: '#020617', padding: '10px 12px' }}>
+                  {node.patch_diff}
+                </pre>
+              </div>
+            ) : node.patch_diff ? (
               <DiffViewer diff={node.patch_diff} nodeId={node.node_id} />
             ) : (
               <p className="inspector__empty">No patch diff associated with this node (root or reproduction checkpoint).</p>

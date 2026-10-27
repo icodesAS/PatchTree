@@ -1,5 +1,5 @@
 export type BranchType = 'root' | 'search' | 'stability' | 'adversarial' | 'full_suite';
-export type TestResult = 'pass' | 'fail' | 'error' | 'timeout';
+export type TestResult = 'pass' | 'fail' | 'error' | 'timeout' | null;
 export type RunStatus = 'running' | 'complete' | 'failed';
 
 export interface PatchNode {
@@ -31,7 +31,7 @@ export interface Run {
   confidence_score?: number | null;
   adversarial_runs?: number;
   adversarial_survived?: number;
-  full_suite_result?: 'pass' | 'fail' | null;
+  full_suite_result?: 'pass' | 'fail' | 'error' | 'skipped' | null;
   total_cost_usd?: number;
   total_wall_time_seconds?: number;
   confidence_report?: string | null;

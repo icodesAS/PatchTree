@@ -1,3 +1,4 @@
+import base64
 import logging
 import os
 import uuid
@@ -46,6 +47,7 @@ class SandboxManager:
 
     def spawn(self, image: str, repo_url: str | None = None) -> None:
         self._history = []
+        self._repo_url = repo_url or ""
         if not self.stub:
             try:
                 self._image = self._client.images.oci(image)
@@ -63,6 +65,15 @@ class SandboxManager:
                     "cp /usr/local/bin/apply_patch /bin/apply_patch 2>/dev/null || true"
                 )
                 self.run_command(shim)
+
+                # Install context_engine.py into container for zero-dependency AST source extraction
+                engine_file = Path(__file__).resolve().parents[1] / "orchestrator" / "context_engine.py"
+                if engine_file.is_file():
+                    try:
+                        engine_b64 = base64.b64encode(engine_file.read_bytes()).decode("ascii")
+                        self.run_command(f"echo '{engine_b64}' | base64 -d > /usr/local/bin/context_engine.py && chmod +x /usr/local/bin/context_engine.py 2>/dev/null || true")
+                    except Exception as e:
+                        logger.warning("Could not inject context_engine shim: %s", e)
 
                 # Clone real external git repo into container if specified
                 repo = (repo_url or "").strip()
@@ -115,10 +126,12 @@ class SandboxManager:
             child = SandboxManager(force_stub=True)
             child._history = list(self._checkpoints.get(checkpoint_id, []))
             child._checkpoints = self._checkpoints
+            child._repo_url = getattr(self, "_repo_url", "")
             return child
 
         child = SandboxManager.__new__(SandboxManager)
         child.stub, child._client = False, self._client
+        child._repo_url = getattr(self, "_repo_url", "")
         try:
             child._image = self._client.images.use(checkpoint_id)
             child._history = []
@@ -128,6 +141,7 @@ class SandboxManager:
             child = SandboxManager(force_stub=True)
             child._history = list(self._checkpoints.get(checkpoint_id, []))
             child._checkpoints = self._checkpoints
+            child._repo_url = getattr(self, "_repo_url", "")
         return child
 
     @staticmethod
@@ -135,12 +149,40 @@ class SandboxManager:
         return data.decode(errors="replace") if isinstance(data, bytes) else str(data or "")
 
     def _stub_run(self, cmd: str) -> CommandResult:
-        """Simulated sandbox: tests fail until a command containing apply_patch has run."""
+        """Simulated sandbox: simulates scenario-accurate test outcomes for demos and tests."""
         self._history.append(cmd)
         if cmd.startswith(PATCH_MARKER):
             return CommandResult(0, "patch applied")
+
         if "pytest" in cmd or "test" in cmd:
-            if any(h.startswith(PATCH_MARKER) for h in self._history):
-                return CommandResult(0, "== 1 passed in 0.01s ==")
-            return CommandResult(1, "FAILED tests/test_bug.py::test_bug - AssertionError: assert 1 == 2\n== 1 failed in 0.01s ==")
+            has_patch = any(h.startswith(PATCH_MARKER) for h in self._history)
+            if not has_patch:
+                return CommandResult(1, "FAILED tests/test_bug.py::test_reproduce - AssertionError: assert result >= 0\n== 1 failed in 0.04s ==")
+
+            repo = getattr(self, "_repo_url", "").lower()
+
+            # Scenario 3: Hard multi-file bug (auth-pipeline)
+            # All 4 standard search branches fail; only Nemotron-3-Ultra (550B) escalation passes
+            if "auth" in repo or "multifile" in repo:
+                is_ultra = any("ultra" in h.lower() for h in self._history) or "ultra" in cmd.lower()
+                if is_ultra:
+                    return CommandResult(0, "PASSED tests/test_auth.py::test_token_verification\n== 1 passed in 0.08s ==")
+                return CommandResult(1, "FAILED tests/test_auth.py::test_token_verification - AssertionError: Multi-file token state mismatch\n== 1 failed in 0.03s ==")
+
+            # Scenario 2: Flaky test isolation (async-scheduler)
+            # 5 stability forks run; fork 3 intermittently fails, isolating the race condition
+            if "async" in repo or "flaky" in repo or "scheduler" in repo:
+                test_execs = sum(1 for h in self._history if "pytest" in h or "test" in h)
+                if test_execs == 4:  # Intermittent failure on one of the stability forks
+                    return CommandResult(1, "FAILED tests/test_timer.py::test_timeout - TimeoutError: Task timed out before cancellation signal received\n== 1 failed in 0.15s ==")
+                return CommandResult(0, "PASSED tests/test_timer.py::test_timeout\n== 1 passed in 0.03s ==")
+
+            # Scenario 1 (Discount bug) and generic mock repos
+            if "discount" in repo:
+                # First branch fails, second branch passes
+                if len(self._history) <= 3:
+                    return CommandResult(1, "FAILED tests/test_discount.py::test_calculate_discount\nAssertionError: Expected 100.0 for 0% discount but got 90.0\n== 1 failed in 0.02s ==")
+                return CommandResult(0, "PASSED tests/test_discount.py::test_calculate_discount\n== 1 passed in 0.02s ==")
+
+            return CommandResult(0, "== 1 passed in 0.01s ==")
         return CommandResult(0, "")

@@ -36,7 +36,13 @@ export default function HistorySidebar({ currentRunId, clientId, onSelectRun, on
   }, []);
 
   useEffect(() => {
-    fetchRuns();
+    let active = true;
+    (async () => {
+      if (active) await fetchRuns();
+    })();
+    return () => {
+      active = false;
+    };
   }, [fetchRuns]);
 
   const myRunsCount = useMemo(() => {

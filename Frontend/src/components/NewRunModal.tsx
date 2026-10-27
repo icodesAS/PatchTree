@@ -4,21 +4,21 @@ import type { RunCreate } from '../types';
 
 const SAMPLES: { label: string; data: RunCreate }[] = [
   {
-    label: '🐛 Math Bug',
+    label: '🐛 Math Service (ZeroDivisionError)',
     data: {
       repo_url: 'https://github.com/example/math-service',
       bug_description: 'compute_average() crashes on empty list with ZeroDivisionError',
       target_test: 'pytest tests/test_math.py::test_average_empty',
-      full_suite_test: 'pytest',
+      full_suite_test: '',
     },
   },
   {
-    label: '🔢 Off-By-One',
+    label: '🔢 Pricing Calculator (Discount Off-By-One)',
     data: {
       repo_url: 'https://github.com/example/pricing-service',
       bug_description: 'calculate_discount() returns negative value when discount_pct > 100',
       target_test: 'pytest tests/test_discount.py::test_calculate_discount',
-      full_suite_test: 'pytest',
+      full_suite_test: '',
     },
   },
 ];
@@ -27,14 +27,15 @@ interface Props {
   onSubmit: (payload: RunCreate) => void;
   onClose: () => void;
   backendOnline: boolean;
+  initialValues?: Partial<RunCreate>;
 }
 
-export default function NewRunModal({ onSubmit, onClose, backendOnline }: Props) {
+export default function NewRunModal({ onSubmit, onClose, backendOnline, initialValues }: Props) {
   const [form, setForm] = useState<RunCreate>({
-    repo_url: '',
-    bug_description: '',
-    target_test: '',
-    full_suite_test: '',
+    repo_url: initialValues?.repo_url || '',
+    bug_description: initialValues?.bug_description || '',
+    target_test: initialValues?.target_test || '',
+    full_suite_test: initialValues?.full_suite_test || '',
   });
 
   const set = (k: keyof RunCreate, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -58,15 +59,6 @@ export default function NewRunModal({ onSubmit, onClose, backendOnline }: Props)
         )}
 
         <div className="modal__body">
-          <div className="modal__samples">
-            <span className="modal__samples-label">Quick fill:</span>
-            {SAMPLES.map((s) => (
-              <button key={s.label} className="btn btn--ghost" onClick={() => setForm(s.data)}>
-                {s.label}
-              </button>
-            ))}
-          </div>
-
           <label className="field">
             <span className="field__label">Repository URL</span>
             <input
@@ -110,6 +102,29 @@ export default function NewRunModal({ onSubmit, onClose, backendOnline }: Props)
               onChange={(e) => set('full_suite_test', e.target.value)}
             />
           </label>
+
+          {/* Hackathon Demo Scenarios for Judges */}
+          <div className="modal__demo-section">
+            <div className="modal__demo-header">
+              <span className="modal__demo-title">💡 Hackathon Demo Templates (Quick-Fill Form)</span>
+              <span className="modal__demo-sub">
+                Click a sample scenario below to automatically populate the fields above for evaluation:
+              </span>
+            </div>
+            <div className="modal__demo-chips">
+              {SAMPLES.map((s) => (
+                <button
+                  key={s.label}
+                  type="button"
+                  className="modal__demo-chip"
+                  onClick={() => setForm(s.data)}
+                  title="Populate form with this benchmark scenario"
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="modal__footer">
