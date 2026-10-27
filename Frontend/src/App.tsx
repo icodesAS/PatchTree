@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import type { PatchNode, Run, RunCreate } from './types';
 import { mockData } from './mockData';
-import { checkHealth, createRun, getRun, getTree, pollUntilComplete } from './api';
+import { checkHealth, createRun, getRun, getTree, pollUntilComplete, HttpError } from './api';
 import { computeLayout, resetLayoutCache, NODE_W, NODE_H } from './layout';
 import NewRunModal from './components/NewRunModal';
 import ReportModal from './components/ReportModal';
@@ -45,9 +45,21 @@ function stageFromNodes(nodes: PatchNode[], runStatus: string): number {
   if (types.has('full_suite')) return 5;
   if (types.has('adversarial')) return 4;
   if (types.has('stability')) return 3;
-  if (types.has('search')) return 2;
   if (types.has('root')) return 1;
   return 0;
+}
+
+function getOrCreateClientId(): string {
+  try {
+    let cid = localStorage.getItem('patchtree_client_id');
+    if (!cid) {
+      cid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'client-' + Math.random().toString(36).substring(2, 12);
+      localStorage.setItem('patchtree_client_id', cid);
+    }
+    return cid;
+  } catch {
+    return 'anon-client';
+  }
 }
 
 // ── Custom node card ──────────────────────────────────────────────────────────
@@ -64,28 +76,34 @@ function PatchNodeCard({ data }: { data: Record<string, unknown> }) {
 
   const modelShort = node.model_used && node.model_used !== 'none'
     ? node.model_used.split('/').pop()?.slice(0, 24)
-    : 'No model';
+    : 'Base Test Runner';
 
   const totalTokens = (node.tokens_in ?? 0) + (node.tokens_out ?? 0);
 
   return (
     <>
-      <Handle type="target" position={Position.Top}
-        style={{ background: color, border: 'none', width: 8, height: 8 }} />
+      <Handle
+        type="target"
+        position={Position.Top}
+        style={{ background: color, border: '2px solid #0b0f19', width: 9, height: 9 }}
+      />
       <div
         className={`pnode${isSelected ? ' pnode--selected' : ''}${isWinner ? ' pnode--winner' : ''}${isUltra ? ' pnode--ultra' : ''}${isRunning ? ' pnode--running' : ''}`}
         style={{ '--branch-color': color } as React.CSSProperties}
       >
         {isWinner && <div className="pnode__winner-badge">{isUltra ? '🏆 Winner ⚡ ULTRA' : '🏆 Winner'}</div>}
         {isUltra && !isWinner && <div className="pnode__ultra-badge">⚡ ULTRA 550B</div>}
-        
+
         <div className="pnode__header">
-          <span className="pnode__type">{BRANCH_LABELS[node.branch_type]}</span>
+          <div className="pnode__header-left">
+            <span className="pnode__dot" style={{ background: color }} />
+            <span className="pnode__type">{BRANCH_LABELS[node.branch_type]}</span>
+          </div>
           <span className={`pnode__badge ${
             isRunning ? 'pnode__badge--running' : isPass ? 'pnode__badge--pass' : isError ? 'pnode__badge--error' : 'pnode__badge--fail'
           }`}>
             {isRunning ? (
-              <span className="flex-center"><Loader size={9} className="spin" /> RUNNING</span>
+              <span className="flex-center"><Loader size={10} className="spin" /> RUNNING</span>
             ) : isPass ? (
               '✓ PASS'
             ) : isError ? (
@@ -96,28 +114,49 @@ function PatchNodeCard({ data }: { data: Record<string, unknown> }) {
           </span>
         </div>
 
-        <div className="pnode__model" title={node.model_used}>
-          {modelShort}
+        <div className="pnode__content">
+          <div className="pnode__model" title={node.model_used}>
+            {modelShort}
+          </div>
+          {node.hypothesis ? (
+            <div className="pnode__desc" title={node.hypothesis}>
+              {node.hypothesis.split('\n')[0].replace(/^generate_patch_\w+:\s*/, '').slice(0, 50)}
+            </div>
+          ) : (
+            <div className="pnode__desc pnode__desc--subtle">
+              {node.test_command || 'reproduce checkpoint'}
+            </div>
+          )}
         </div>
 
-        {node.branch_type === 'stability' && node.stability_runs != null && (
-          <div className="pnode__stability">{node.stability_passes}/{node.stability_runs} ✓</div>
-        )}
-        {node.branch_type === 'adversarial' && (
-          <div className={`pnode__stability ${isPass ? '' : 'pnode__stability--fail'}`}>
-            {isRunning ? '⚔️ Probing patch…' : isPass ? '🛡 Survived' : '💥 Broke patch'}
-          </div>
-        )}
+        <div className="pnode__footer">
+          {node.branch_type === 'stability' && node.stability_runs != null ? (
+            <div className="pnode__metric pnode__metric--stability">
+              <span>{node.stability_passes}/{node.stability_runs} ✓ Stable</span>
+            </div>
+          ) : node.branch_type === 'adversarial' ? (
+            <div className={`pnode__metric ${isPass ? 'pnode__metric--survived' : 'pnode__metric--broke'}`}>
+              {isRunning ? '⚔️ Probing patch…' : isPass ? '🛡 Survived' : '💥 Broke patch'}
+            </div>
+          ) : (
+            <div className="pnode__metric">
+              {node.branch_type === 'root' ? 'Baseline Bug' : 'Search Hypothesis'}
+            </div>
+          )}
 
-        {totalTokens > 0 && (
-          <div className="pnode__tokens">
-            <Zap size={9} />
-            <span>{totalTokens} tok</span>
-          </div>
-        )}
+          {totalTokens > 0 && (
+            <div className="pnode__tokens">
+              <Zap size={10} />
+              <span>{totalTokens.toLocaleString()} tok</span>
+            </div>
+          )}
+        </div>
       </div>
-      <Handle type="source" position={Position.Bottom}
-        style={{ background: color, border: 'none', width: 8, height: 8 }} />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        style={{ background: color, border: '2px solid #0b0f19', width: 9, height: 9 }}
+      />
     </>
   );
 }
@@ -231,9 +270,25 @@ export default function App() {
         pollCancelRef.current = cancel;
         await promise;
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.warn('Failed to load selected run:', err);
-      setOfflineBanner(true);
+      if (err instanceof HttpError && err.status === 404) {
+        // Run not found (e.g. from past reload or stale URL query param)
+        try {
+          localStorage.removeItem('patchtree_active_run_id');
+          const cleanUrl = new URL(window.location.href);
+          cleanUrl.searchParams.delete('run');
+          window.history.replaceState(null, '', cleanUrl.pathname + (cleanUrl.search ? cleanUrl.search : ''));
+        } catch {
+          // ignore
+        }
+        setRun(null);
+        setPatchNodes([]);
+        setOfflineBanner(false);
+      } else {
+        const isOnline = await checkHealth();
+        setOfflineBanner(!isOnline);
+      }
     } finally {
       setLoading(false);
       pollCancelRef.current = null;
@@ -263,8 +318,10 @@ export default function App() {
     setPatchNodes([]);
     setSelectedId(null);
     try {
-      const newRun = await createRun(payload);
+      const clientId = getOrCreateClientId();
+      const newRun = await createRun({ ...payload, client_id: clientId });
       setRun(newRun);
+      setOfflineBanner(false);
       syncUrlAndStorage(newRun.run_id);
       const { promise, cancel } = pollUntilComplete(newRun.run_id, (r, ns) => {
         setRun(r);
@@ -273,7 +330,8 @@ export default function App() {
       pollCancelRef.current = cancel;
       await promise;
     } catch (e) {
-      setOfflineBanner(true);
+      const isOnline = await checkHealth();
+      setOfflineBanner(!isOnline);
     } finally {
       setLoading(false);
       setStartTs(null);
@@ -441,6 +499,7 @@ export default function App() {
       {showHistory && (
         <HistorySidebar
           currentRunId={run?.run_id}
+          clientId={getOrCreateClientId()}
           onSelectRun={selectRun}
           onClose={() => setShowHistory(false)}
         />

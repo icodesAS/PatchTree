@@ -12,6 +12,7 @@ import os
 from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
+from .db.client import db
 from .models.schemas import Node, Run, RunCreate
 from .orchestrator.pipeline import run_pipeline
 
@@ -31,8 +32,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-runs: dict[str, Run] = {}
-nodes: dict[str, list[Node]] = {}
+runs: dict[str, Run] = db.runs
+nodes: dict[str, list[Node]] = db.nodes
 
 
 async def _run_pipeline(run: Run) -> None:
@@ -40,12 +41,17 @@ async def _run_pipeline(run: Run) -> None:
     try:
         updated_run, _ = await run_pipeline(run, live_nodes=live_list)
         runs[run.run_id] = updated_run
+        await db.save_run(updated_run)
+        await db.save_nodes(run.run_id, live_list)
     except Exception as e:
         logger.exception("Pipeline failed for run %s: %s", run.run_id, e)
         run.status = "failed"
         run.completed_at = datetime.now(timezone.utc)
         if run.created_at:
             run.total_wall_time_seconds = round((run.completed_at - run.created_at).total_seconds(), 2)
+        runs[run.run_id] = run
+        await db.save_run(run)
+        await db.save_nodes(run.run_id, live_list)
 
 
 @app.post("/runs", response_model=Run, status_code=status.HTTP_201_CREATED)
@@ -75,28 +81,30 @@ async def create_run(request: RunCreate, background_tasks: BackgroundTasks) -> R
     )
     runs[run.run_id] = run
     nodes[run.run_id] = []
+    await db.save_run(run)
     background_tasks.add_task(_run_pipeline, run)
     return run
 
 
 @app.get("/runs", response_model=list[Run])
-async def list_runs() -> list[Run]:
-    return list(runs.values())
+async def list_runs(client_id: str | None = None) -> list[Run]:
+    return await db.list_runs(client_id=client_id)
 
 
 @app.get("/runs/{run_id}", response_model=Run)
 async def get_run(run_id: str) -> Run:
-    if run_id not in runs:
+    run = await db.get_run(run_id)
+    if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Run not found"
         )
-    return runs[run_id]
+    return run
 
 
 @app.get("/runs/{run_id}/tree", response_model=list[Node])
 async def get_tree(run_id: str) -> list[Node]:
     await get_run(run_id)
-    return nodes[run_id]
+    return await db.get_nodes(run_id)
 
 
 @app.get("/health")

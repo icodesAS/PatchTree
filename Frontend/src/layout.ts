@@ -1,8 +1,8 @@
 import dagre from 'dagre';
 import type { PatchNode } from './types';
 
-export const NODE_W = 220;
-export const NODE_H = 100;
+export const NODE_W = 280;
+export const NODE_H = 135;
 
 // Coordinate cache so existing nodes don't jump on incremental updates
 const layoutCache = new Map<string, { x: number; y: number }>();

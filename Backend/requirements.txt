@@ -4,3 +4,4 @@ uvicorn
 contree-sdk
 openai
 python-dotenv
+supabase

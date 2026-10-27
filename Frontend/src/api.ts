@@ -2,6 +2,15 @@ import type { PatchNode, Run, RunCreate } from './types';
 
 const BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
+export class HttpError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+    this.name = 'HttpError';
+  }
+}
+
 export async function checkHealth(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(3000) });
@@ -19,25 +28,26 @@ export async function createRun(payload: RunCreate): Promise<Run> {
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => res.statusText);
-    throw new Error(`POST /runs failed (${res.status}): ${txt}`);
+    throw new HttpError(`POST /runs failed (${res.status}): ${txt}`, res.status);
   }
   return res.json();
 }
 
 export async function getRun(runId: string): Promise<Run> {
   const res = await fetch(`${BASE}/runs/${runId}`);
-  if (!res.ok) throw new Error(`GET /runs/${runId} failed: ${res.status}`);
+  if (!res.ok) throw new HttpError(`GET /runs/${runId} failed: ${res.status}`, res.status);
   return res.json();
 }
 
 export async function getTree(runId: string): Promise<PatchNode[]> {
   const res = await fetch(`${BASE}/runs/${runId}/tree`);
-  if (!res.ok) throw new Error(`GET /runs/${runId}/tree failed: ${res.status}`);
+  if (!res.ok) throw new HttpError(`GET /runs/${runId}/tree failed: ${res.status}`, res.status);
   return res.json();
 }
 
-export async function listRuns(): Promise<Run[]> {
-  const res = await fetch(`${BASE}/runs`);
+export async function listRuns(clientId?: string): Promise<Run[]> {
+  const url = clientId ? `${BASE}/runs?client_id=${encodeURIComponent(clientId)}` : `${BASE}/runs`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`GET /runs failed: ${res.status}`);
   return res.json();
 }

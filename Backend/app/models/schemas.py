@@ -9,6 +9,7 @@ class RunCreate(BaseModel):
     bug_description: str
     target_test: str
     full_suite_test: Optional[str] = None
+    client_id: Optional[str] = None
 
 
 class Run(RunCreate):

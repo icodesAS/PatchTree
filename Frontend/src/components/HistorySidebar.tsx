@@ -1,25 +1,26 @@
-import { useState, useEffect, useCallback } from 'react';
-import { X, RotateCw, History, GitBranch, Clock, DollarSign, Percent, AlertCircle, Loader } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { X, RotateCw, History, GitBranch, Clock, DollarSign, Percent, AlertCircle, Loader, User, Globe } from 'lucide-react';
 import type { Run } from '../types';
 import { listRuns } from '../api';
 
 interface Props {
   currentRunId?: string | null;
+  clientId?: string;
   onSelectRun: (runId: string) => void;
   onClose: () => void;
 }
 
-export default function HistorySidebar({ currentRunId, onSelectRun, onClose }: Props) {
+export default function HistorySidebar({ currentRunId, clientId, onSelectRun, onClose }: Props) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'my' | 'all'>('my');
 
   const fetchRuns = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const data = await listRuns();
-      // Sort newest first
       data.sort((a, b) => {
         const da = a.created_at ? new Date(a.created_at).getTime() : 0;
         const db = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -37,6 +38,18 @@ export default function HistorySidebar({ currentRunId, onSelectRun, onClose }: P
   useEffect(() => {
     fetchRuns();
   }, [fetchRuns]);
+
+  const myRunsCount = useMemo(() => {
+    if (!clientId) return 0;
+    return runs.filter((r) => r.client_id === clientId).length;
+  }, [runs, clientId]);
+
+  const displayedRuns = useMemo(() => {
+    if (filter === 'my' && clientId) {
+      return runs.filter((r) => r.client_id === clientId);
+    }
+    return runs;
+  }, [runs, filter, clientId]);
 
   const formatTime = (iso?: string) => {
     if (!iso) return '';
@@ -71,6 +84,26 @@ export default function HistorySidebar({ currentRunId, onSelectRun, onClose }: P
           </div>
         </div>
 
+        {/* Anonymous Session Scope Filter */}
+        <div className="history-sidebar__tabs">
+          <button
+            type="button"
+            className={`history-tab ${filter === 'my' ? 'history-tab--active' : ''}`}
+            onClick={() => setFilter('my')}
+          >
+            <User size={13} />
+            My Session ({myRunsCount})
+          </button>
+          <button
+            type="button"
+            className={`history-tab ${filter === 'all' ? 'history-tab--active' : ''}`}
+            onClick={() => setFilter('all')}
+          >
+            <Globe size={13} />
+            Community & Demos ({runs.length})
+          </button>
+        </div>
+
         <div className="history-sidebar__body">
           {loading && runs.length === 0 ? (
             <div className="history-sidebar__state">
@@ -83,22 +116,33 @@ export default function HistorySidebar({ currentRunId, onSelectRun, onClose }: P
               <span>{error}</span>
               <button className="btn btn--secondary btn--sm" onClick={fetchRuns}>Retry</button>
             </div>
-          ) : runs.length === 0 ? (
+          ) : displayedRuns.length === 0 ? (
             <div className="history-sidebar__state">
               <GitBranch size={28} />
-              <p>No backend runs recorded yet.</p>
-              <span className="text-muted" style={{ fontSize: '0.75rem' }}>
-                Dispatch a verification run via <strong>+ New Run</strong>.
-              </span>
+              <p>{filter === 'my' ? 'No runs in this browser session yet.' : 'No backend runs recorded yet.'}</p>
+              {filter === 'my' && runs.length > 0 ? (
+                <button
+                  className="btn btn--secondary btn--sm"
+                  style={{ marginTop: 8 }}
+                  onClick={() => setFilter('all')}
+                >
+                  View All {runs.length} Community Runs
+                </button>
+              ) : (
+                <span className="text-muted" style={{ fontSize: '0.75rem' }}>
+                  Dispatch a verification run via <strong>+ New Run</strong>.
+                </span>
+              )}
             </div>
           ) : (
             <div className="history-list">
-              {runs.map((r: Run) => {
+              {displayedRuns.map((r: Run) => {
                 const isActive = r.run_id === currentRunId;
                 const score = r.confidence_score != null
                   ? Math.round(r.confidence_score <= 1 ? r.confidence_score * 100 : r.confidence_score)
                   : null;
                 const repoShort = (r.repo_url ?? '').split('/').slice(-2).join('/') || 'repo';
+                const isMine = clientId && r.client_id === clientId;
 
                 return (
                   <div
@@ -110,9 +154,12 @@ export default function HistorySidebar({ currentRunId, onSelectRun, onClose }: P
                     }}
                   >
                     <div className="history-card__top">
-                      <span className="history-card__repo" title={r.repo_url}>
-                        {repoShort}
-                      </span>
+                      <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
+                        <span className="history-card__repo" title={r.repo_url}>
+                          {repoShort}
+                        </span>
+                        {isMine && <span className="pnode__badge pnode__badge--pass" style={{ fontSize: '0.58rem', padding: '1px 5px' }}>YOU</span>}
+                      </div>
                       <span className={`status-pill status-pill--${r.status}`}>
                         {r.status.toUpperCase()}
                       </span>

@@ -1,15 +1,29 @@
-"""Routes PatchTree jobs to Nemotron tiers on Nebius Token Factory (stub fallback offline)."""
 import logging
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+import httpx
 from openai import AsyncOpenAI
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 logger = logging.getLogger(__name__)
+
+_http2_clients: dict[str, AsyncOpenAI] = {}
+
+
+def _get_llm_client(api_key: str, base_url: str) -> AsyncOpenAI:
+    cache_key = f"{api_key}:{base_url}"
+    if cache_key not in _http2_clients:
+        http_client = httpx.AsyncClient(http2=True, timeout=60.0)
+        _http2_clients[cache_key] = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=http_client,
+        )
+    return _http2_clients[cache_key]
 TIERS = {
     "nano": {
         "model": os.getenv("NEBIUS_MODEL_NANO", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"),
@@ -51,7 +65,7 @@ async def call_model(job: str, prompt: str, system_prompt: str | None = None, te
     key = os.getenv("NEBIUS_API_KEY")
     if key:
         try:
-            client = AsyncOpenAI(api_key=key, base_url=base_url)
+            client = _get_llm_client(key, base_url)
             messages = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})

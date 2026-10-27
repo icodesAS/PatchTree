@@ -39,6 +39,7 @@ export interface Run {
   bug_description?: string;
   target_test?: string;
   full_suite_test?: string;
+  client_id?: string;
   created_at?: string;
   completed_at?: string;
 }
@@ -48,4 +49,5 @@ export interface RunCreate {
   bug_description: string;
   target_test: string;
   full_suite_test?: string;
+  client_id?: string;
 }

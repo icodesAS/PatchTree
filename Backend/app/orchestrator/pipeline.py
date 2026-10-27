@@ -332,33 +332,87 @@ def extract_code(content: str) -> str:
     return content.strip()
 
 
-def extract_file_paths_from_trace(test_command: str, test_output: str) -> list[str]:
-    """Extract candidate repository file paths mentioned in test command and pytest traceback."""
-    files: list[str] = []
+def extract_file_locations_from_trace(test_command: str, test_output: str) -> dict[str, list[int]]:
+    """Extract candidate repository file paths and failing line numbers from traceback."""
+    locations: dict[str, list[int]] = {}
 
-    # 1. From test command (e.g., pytest tests/test_bug.py -> tests/test_bug.py)
+    # 1. From test command (e.g., pytest tests/test_bug.py)
     for part in (test_command or "").split():
         if part.endswith(".py") and not part.startswith("-"):
             clean = part.split("::")[0].strip()
-            if clean and clean not in files:
-                files.append(clean)
+            if clean and clean not in locations:
+                locations[clean] = []
 
     # 2. From traceback lines like:
-    # tests/test_bug.py:15: in test_func
-    # src/parser.py:42: in parse
-    # >   assert calc(1) == 2 (tests/test_bug.py:12)
-    matches = re.findall(r"(?:^|[ \t\n\"'\(])([a-zA-Z0-9_\-./]+\.py)(?::\d+)?", test_output or "")
-    for m in matches:
-        clean = m.strip()
-        # Filter out standard library, virtualenvs, and test framework internal paths
+    # src/parser.py:876: in parse_payload
+    # tests/test_bug.py:15: in test_something
+    matches = re.findall(r"(?:^|[ \t\n\"'\(])([a-zA-Z0-9_\-./]+\.py)(?::(\d+))?", test_output or "")
+    for filepath, line_str in matches:
+        clean = filepath.strip()
         if any(ign in clean.lower() for ign in (
             "site-packages", "/usr/lib", "pytest", "pluggy", "_pytest", "unittest", "<string>"
         )):
             continue
-        if clean not in files:
-            files.append(clean)
+        if clean not in locations:
+            locations[clean] = []
+        if line_str:
+            try:
+                line_num = int(line_str)
+                if line_num not in locations[clean]:
+                    locations[clean].append(line_num)
+            except ValueError:
+                pass
 
-    return files[:4]
+    return locations
+
+
+def slice_smart_context(content: str, target_lines: list[int], max_total_lines: int = 250) -> str:
+    """
+    Slices a file intelligently around failure points:
+    - If total lines <= max_total_lines: return entire file with 1-based line numbers.
+    - If total lines > max_total_lines:
+      - Always include module header (lines 1 to 25) for top-level imports and declarations.
+      - Center a window (e.g. line - 25 to line + 25) around each error line.
+      - Merge overlapping windows and display with line numbers so LLM sees exact locations.
+    """
+    all_lines = content.splitlines()
+    total = len(all_lines)
+    if total <= max_total_lines:
+        return "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(all_lines))
+
+    indices_to_include = set()
+
+    # Always include top 25 lines (imports, declarations)
+    for i in range(min(25, total)):
+        indices_to_include.add(i)
+
+    # For each target error line, include window of 25 lines before and after
+    for tgt in target_lines:
+        tgt_idx = tgt - 1
+        start_idx = max(0, tgt_idx - 25)
+        end_idx = min(total, tgt_idx + 26)
+        for i in range(start_idx, end_idx):
+            indices_to_include.add(i)
+
+    if not target_lines:
+        for i in range(min(max_total_lines, total)):
+            indices_to_include.add(i)
+
+    sorted_indices = sorted(indices_to_include)
+
+    output_lines: list[str] = []
+    prev_idx = -1
+    for idx in sorted_indices:
+        if prev_idx != -1 and idx > prev_idx + 1:
+            skipped = idx - prev_idx - 1
+            output_lines.append(f"     | ... [{skipped} lines skipped] ...")
+        output_lines.append(f"{idx + 1:4d} | {all_lines[idx]}")
+        prev_idx = idx
+
+    if sorted_indices and sorted_indices[-1] < total - 1:
+        output_lines.append(f"     | ... [{total - 1 - sorted_indices[-1]} lines skipped to EOF] ...")
+
+    return "\n".join(output_lines)
 
 
 def extract_relevant_source_context(
@@ -372,14 +426,14 @@ def extract_relevant_source_context(
     if sandbox.stub:
         return ""
 
-    candidate_paths = extract_file_paths_from_trace(target_test, test_output)
-    if not candidate_paths:
+    file_locations = extract_file_locations_from_trace(target_test, test_output)
+    if not file_locations:
         return ""
 
     context_blocks: list[str] = []
     seen_files = set()
 
-    for path in candidate_paths:
+    for path, target_lines in list(file_locations.items())[:max_files]:
         if path in seen_files or len(seen_files) >= max_files:
             continue
 
@@ -387,12 +441,8 @@ def extract_relevant_source_context(
         res = sandbox.run_command(read_cmd)
         if res.exit_code == 0 and res.output.strip():
             seen_files.add(path)
-            content = res.output
-            lines = content.splitlines()
-            if len(lines) > max_lines:
-                content = "\n".join(lines[:max_lines]) + f"\n... [{len(lines) - max_lines} more lines truncated] ..."
-
-            context_blocks.append(f"File: `{path}`\n```python\n{content}\n```")
+            smart_content = slice_smart_context(res.output, target_lines, max_total_lines=max_lines)
+            context_blocks.append(f"File: `{path}` (with line numbers)\n```python\n{smart_content}\n```")
 
             # Check AST for direct relative or local imports
             try:
@@ -407,8 +457,7 @@ def extract_relevant_source_context(
                             sub_res = sandbox.run_command(f"cat '{mod_path}'")
                             if sub_res.exit_code == 0 and sub_res.output.strip():
                                 seen_files.add(mod_path)
-                                sub_lines = sub_res.output.splitlines()
-                                sub_content = "\n".join(sub_lines[:max_lines]) if len(sub_lines) > max_lines else sub_res.output
+                                sub_content = slice_smart_context(sub_res.output, [], max_total_lines=max_lines)
                                 rel_display = mod_path.replace("/app/", "")
                                 context_blocks.append(f"File: `{rel_display}` (imported dependency)\n```python\n{sub_content}\n```")
             except Exception:
