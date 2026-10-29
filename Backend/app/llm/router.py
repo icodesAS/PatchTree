@@ -29,7 +29,10 @@ def end_run_llm_budget(token: Token) -> None:
 def _get_llm_client(api_key: str, base_url: str) -> AsyncOpenAI:
     cache_key = f"{api_key}:{base_url}"
     if cache_key not in _http2_clients:
-        http_client = httpx.AsyncClient(http2=True, timeout=60.0)
+        try:
+            http_client = httpx.AsyncClient(http2=True, timeout=60.0)
+        except ImportError:
+            http_client = httpx.AsyncClient(timeout=60.0)
         _http2_clients[cache_key] = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
