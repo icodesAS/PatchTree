@@ -44,13 +44,28 @@ interface StageItem {
 }
 
 function stageFromNodes(nodes: PatchNode[], runStatus: string, hasFullSuite: boolean): number {
-  const finalStage = hasFullSuite ? 6 : 5;
-  if (runStatus === 'complete' || runStatus === 'failed') return finalStage;
-  const types = new Set(nodes.map((n) => n.branch_type));
-  if (hasFullSuite && types.has('full_suite')) return 5;
-  if (types.has('adversarial')) return 4;
-  if (types.has('stability')) return 3;
-  if (types.has('root')) return 1;
+  const reportIdx = hasFullSuite ? 5 : 4;
+  if (runStatus === 'complete') return reportIdx + 1;
+
+  const hasSuite = hasFullSuite && nodes.some((n) => n.branch_type === 'full_suite');
+  const hasAdversarial = nodes.some((n) => n.branch_type === 'adversarial');
+  const hasStability = nodes.some((n) => n.branch_type === 'stability');
+  const searchNodes = nodes.filter((n) => n.branch_type === 'search');
+  const rootReproduced = nodes.some(
+    (n) => n.branch_type === 'root' && n.status === 'done' && n.test_result === 'fail',
+  );
+
+  if (hasSuite) return runStatus === 'failed' ? 4 : 5;
+  if (hasAdversarial) return runStatus === 'failed' ? 3 : 4;
+  if (hasStability) {
+    const anyStable = searchNodes.some((n) => n.is_stable);
+    return runStatus === 'failed' || !anyStable ? 2 : 3;
+  }
+  if (searchNodes.length > 0) {
+    const anyPass = searchNodes.some((n) => n.test_result === 'pass');
+    return runStatus === 'failed' || !anyPass ? 1 : 2;
+  }
+  if (rootReproduced) return 1;
   return 0;
 }
 
@@ -296,9 +311,17 @@ export default function App() {
       });
       pollCancelRef.current = cancel;
       await promise;
-    } catch {
+    } catch (err) {
       const isOnline = await checkHealth();
       setOfflineBanner(!isOnline);
+      const errMsg = err instanceof Error ? err.message : 'Failed to start verification run.';
+      setPatchNodes((prev) =>
+        prev.map((n) =>
+          n.node_id === 'root-init'
+            ? { ...n, status: 'done', test_result: 'error', hypothesis: 'Run dispatch rejected', test_output: errMsg }
+            : n,
+        ),
+      );
     } finally {
       setLoading(false);
       setStartTs(null);

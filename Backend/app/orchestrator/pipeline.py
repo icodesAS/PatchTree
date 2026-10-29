@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from ..llm.router import call_model
+from ..llm.router import call_model, end_run_llm_budget, start_run_llm_budget
 from ..models.schemas import Node, Run
 from ..sandbox.contree_client import CommandResult, SandboxManager
 from . import context_engine as ce
@@ -193,6 +193,30 @@ def is_reproduction_error(exit_code: int, output: str) -> bool:
 def reproduce(run: Run, sandbox: SandboxManager) -> Node:
     """ReproduceNode: boot sandbox, prepare repository, run target test, record root node."""
     repo_url = (run.repo_url or "").strip()
+    if repo_url.startswith(("github.com/", "gitlab.com/", "bitbucket.org/")):
+        repo_url = f"https://{repo_url}"
+        run.repo_url = repo_url
+
+    if not sandbox.stub and (
+        not repo_url
+        or any(ch.isspace() for ch in repo_url)
+        or not repo_url.startswith(("https://", "http://", "git@", "ssh://"))
+    ):
+        logger.warning(f"Invalid repository URL rejected before container spawn: {repo_url!r}")
+        return Node(
+            node_id=str(uuid.uuid4()),
+            run_id=run.run_id,
+            branch_type="root",
+            checkpoint_id=None,
+            test_command=run.target_test,
+            test_result="error",
+            test_output=(
+                f"Invalid repository URL: '{repo_url}'.\n"
+                "Expected an HTTPS or SSH Git repository URL (e.g. https://github.com/owner/repo)."
+            ),
+            status="done",
+        )
+
     sandbox.spawn("python:3.11", repo_url=repo_url)
 
     # In real sandbox, clone repository into /app if a valid remote URL is provided
@@ -339,13 +363,14 @@ async def ultra_synthesize_patch(
         f"pytest failure trace:\n{node.test_output or ''}"
         for i, node in enumerate(failed_branches)
     )
-    source_context = extract_relevant_source_context(
-        sandbox=sandbox,
-        target_test=parent_node.test_command or run.target_test,
-        test_output=failed_branches[0].test_output if failed_branches else "",
-        bug_description=run.bug_description,
-        budget_tokens=4500,
-        profile="wide",
+    source_context = await asyncio.to_thread(
+        extract_relevant_source_context,
+        sandbox,
+        parent_node.test_command or run.target_test,
+        failed_branches[0].test_output if failed_branches else "",
+        run.bug_description,
+        4500,
+        "wide",
     )
     prompt = (
         f"Bug description: {run.bug_description}\n"
@@ -368,19 +393,17 @@ async def ultra_synthesize_patch(
     patch_diff = extract_diff(raw_content) or raw_content
     hypothesis = "Escalated to Nemotron Ultra 550B: Analyzed all prior failed search branches and synthesized an authoritative multi-line fix."
 
-    fork = sandbox.fork(parent_node.checkpoint_id)
-    apply_result = _apply_patch_in_sandbox(fork, f"ultra_{node_id}.diff", patch_diff)
-    logger.debug(f"Ultra escalation: patch apply exit_code={apply_result.exit_code}")
-
-    if apply_result.exit_code != 0:
-        test_result: Literal["pass", "fail", "error"] = "error"
-        test_output = f"Patch application failed:\n{apply_result.output}"
-    else:
+    def _verify_ultra() -> tuple[Literal["pass", "fail", "error"], str, str]:
+        fork = sandbox.fork(parent_node.checkpoint_id)
+        apply_result = _apply_patch_in_sandbox(fork, f"ultra_{node_id}.diff", patch_diff)
+        logger.debug(f"Ultra escalation: patch apply exit_code={apply_result.exit_code}")
+        if apply_result.exit_code != 0:
+            return "error", f"Patch application failed:\n{apply_result.output}", fork.checkpoint()
         test_result_obj = fork.run_command(parent_node.test_command or run.target_test)
-        test_result = "pass" if test_result_obj.exit_code == 0 else "fail"
-        test_output = test_result_obj.output
+        res: Literal["pass", "fail", "error"] = "pass" if test_result_obj.exit_code == 0 else "fail"
+        return res, test_result_obj.output, fork.checkpoint()
 
-    checkpoint_id = fork.checkpoint()
+    test_result, test_output, checkpoint_id = await asyncio.to_thread(_verify_ultra)
     cost = calculate_token_cost(response["model"], response["tokens_in"], response["tokens_out"])
     node = Node(
         node_id=node_id,
@@ -592,13 +615,11 @@ async def _execute_branch(
     temperature: float,
     instruction_template: str,
     guidance: str | None = None,
+    source_context: str | None = None,
 ) -> Node:
     """Execute a single search branch: fork, call model, apply patch, test."""
     node_id = str(uuid.uuid4())
     logger.info(f"Branch {branch_index + 1}/4 ({job}): starting node {node_id}")
-
-    # Fork the sandbox from parent checkpoint
-    fork = parent_sandbox.fork(parent_node.checkpoint_id)
 
     # Build the prompt
     prompt = instruction_template.format(
@@ -609,14 +630,16 @@ async def _execute_branch(
     if guidance:
         prompt += f"\n\nRevised guidance from the failed previous round: {guidance}"
 
-    source_context = extract_relevant_source_context(
-        sandbox=parent_sandbox,
-        target_test=parent_node.test_command or run.target_test,
-        test_output=parent_node.test_output or "",
-        bug_description=run.bug_description,
-        budget_tokens=3000,
-        profile="default",
-    )
+    if source_context is None:
+        source_context = await asyncio.to_thread(
+            extract_relevant_source_context,
+            parent_sandbox,
+            parent_node.test_command or run.target_test,
+            parent_node.test_output or "",
+            run.bug_description,
+            3000,
+            "default",
+        )
     if source_context:
         prompt += f"\n\n{source_context}"
 
@@ -633,21 +656,17 @@ async def _execute_branch(
     patch_diff = extract_diff(raw_content) or raw_content
     hypothesis = f"{job}: {patch_diff[:100]}..."
 
-    # Apply the patch in the forked sandbox
-    apply_result = _apply_patch_in_sandbox(fork, f"{node_id}.diff", patch_diff)
-    logger.debug(f"Branch {branch_index + 1}: patch apply exit_code={apply_result.exit_code}")
+    def _apply_and_verify() -> tuple[Literal["pass", "fail", "error"], str, str]:
+        fork = parent_sandbox.fork(parent_node.checkpoint_id)
+        apply_res = _apply_patch_in_sandbox(fork, f"{node_id}.diff", patch_diff)
+        logger.debug(f"Branch {branch_index + 1}: patch apply exit_code={apply_res.exit_code}")
+        if apply_res.exit_code != 0:
+            return "error", f"Patch application failed:\n{apply_res.output}", fork.checkpoint()
+        test_res_obj = fork.run_command(parent_node.test_command or run.target_test)
+        res_label: Literal["pass", "fail", "error"] = "pass" if test_res_obj.exit_code == 0 else "fail"
+        return res_label, test_res_obj.output, fork.checkpoint()
 
-    if apply_result.exit_code != 0:
-        test_result: Literal["pass", "fail", "error"] = "error"
-        test_output = f"Patch application failed:\n{apply_result.output}"
-    else:
-        # Run the test
-        test_result_obj = fork.run_command(parent_node.test_command or run.target_test)
-        test_result = "pass" if test_result_obj.exit_code == 0 else "fail"
-        test_output = test_result_obj.output
-
-    # Create checkpoint after applying patch
-    checkpoint_id = fork.checkpoint()
+    test_result, test_output, checkpoint_id = await asyncio.to_thread(_apply_and_verify)
     cost = calculate_token_cost(model_response["model"], model_response["tokens_in"], model_response["tokens_out"])
 
     node = Node(
@@ -705,6 +724,16 @@ async def search_round(
     if parent_sandbox.stub:
         parent_sandbox._checkpoints.setdefault(parent_node.checkpoint_id, [])
 
+    shared_context = await asyncio.to_thread(
+        extract_relevant_source_context,
+        parent_sandbox,
+        parent_node.test_command or run.target_test,
+        parent_node.test_output or "",
+        run.bug_description,
+        3000,
+        "default",
+    )
+
     # Build tasks for concurrent execution
     tasks = [
         _execute_branch(
@@ -716,6 +745,7 @@ async def search_round(
             temperature=temp,
             instruction_template=instruction,
             guidance=guidance[i] if guidance and i < len(guidance) else None,
+            source_context=shared_context,
         )
         for i, (job, temp, instruction) in enumerate(SEARCH_BRANCHES)
     ]
@@ -922,18 +952,20 @@ async def run_pipeline(
     End-to-end patch search state machine:
     reproduce -> 4-branch search -> evaluate -> if all fail, Ultra synthesizes
     directly -> stability -> adversarial -> full_suite -> report.
-
-    Args:
-        run: The Run to process.
-        max_rounds: Unused (kept for API compatibility). Ultra escalation is
-            always the single fallback after round 1 fails.
-        sandbox: Optional sandbox instance (defaults to SandboxManager()).
-        live_nodes: Optional mutable list that receives nodes in real-time.
-
-    Returns:
-        (updated_run, all_nodes_created). On success run.status is "complete"
-        and run.winner_node_id is set; otherwise run.status is "failed".
     """
+    budget_token = start_run_llm_budget()
+    try:
+        return await _run_pipeline_impl(run, max_rounds=max_rounds, sandbox=sandbox, live_nodes=live_nodes)
+    finally:
+        end_run_llm_budget(budget_token)
+
+
+async def _run_pipeline_impl(
+    run: Run,
+    max_rounds: int = 2,
+    sandbox: SandboxManager | None = None,
+    live_nodes: list[Node] | None = None,
+) -> tuple[Run, list[Node]]:
     force_stub = bool(
         os.environ.get("PATCHTREE_FORCE_STUB", "").lower() in ("1", "true")
         or "example" in (run.repo_url or "").lower()

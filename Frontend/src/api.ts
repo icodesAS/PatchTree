@@ -1,6 +1,6 @@
 import type { PatchNode, Run, RunCreate } from './types';
 
-const BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '');
 
 export class HttpError extends Error {
   status: number;
@@ -28,7 +28,12 @@ export async function createRun(payload: RunCreate): Promise<Run> {
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => res.statusText);
-    throw new HttpError(`POST /runs failed (${res.status}): ${txt}`, res.status);
+    let msg = txt;
+    try {
+      const parsed = JSON.parse(txt);
+      if (typeof parsed?.detail === 'string') msg = parsed.detail;
+    } catch { /* non-JSON body */ }
+    throw new HttpError(msg || `POST /runs failed (${res.status})`, res.status);
   }
   return res.json();
 }

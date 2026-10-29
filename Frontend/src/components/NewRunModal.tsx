@@ -30,6 +30,27 @@ interface Props {
   initialValues?: Partial<RunCreate>;
 }
 
+function validateRepoUrl(raw: string): { normalized: string; error: string | null } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { normalized: '', error: null };
+  if (/\s/.test(trimmed)) {
+    return {
+      normalized: trimmed,
+      error: 'Enter a Git repository URL without spaces or commands (e.g. https://github.com/owner/repo).',
+    };
+  }
+  const normalized = /^(github\.com|gitlab\.com|bitbucket\.org)\//i.test(trimmed)
+    ? `https://${trimmed}`
+    : trimmed;
+  const isGitUrl = /^(https?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+|git@[^\s:]+:[^\s/]+\/[^\s/]+|ssh:\/\/[^\s/]+\/.+)/i.test(
+    normalized,
+  );
+  return {
+    normalized,
+    error: isGitUrl ? null : 'Must be a valid Git repository URL (e.g. https://github.com/owner/repo).',
+  };
+}
+
 export default function NewRunModal({ onSubmit, onClose, backendOnline, initialValues }: Props) {
   const [form, setForm] = useState<RunCreate>({
     repo_url: initialValues?.repo_url || '',
@@ -39,7 +60,10 @@ export default function NewRunModal({ onSubmit, onClose, backendOnline, initialV
   });
 
   const set = (k: keyof RunCreate, v: string) => setForm((f) => ({ ...f, [k]: v }));
-  const valid = form.repo_url.trim() && form.bug_description.trim() && form.target_test.trim();
+  const repoCheck = validateRepoUrl(form.repo_url);
+  const valid = Boolean(
+    repoCheck.normalized && !repoCheck.error && form.bug_description.trim() && form.target_test.trim(),
+  );
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -68,6 +92,11 @@ export default function NewRunModal({ onSubmit, onClose, backendOnline, initialV
               value={form.repo_url}
               onChange={(e) => set('repo_url', e.target.value)}
             />
+            {repoCheck.error && (
+              <span style={{ color: '#f87171', fontSize: '0.76rem', marginTop: 4, display: 'block' }}>
+                {repoCheck.error}
+              </span>
+            )}
           </label>
 
           <label className="field">
@@ -132,7 +161,15 @@ export default function NewRunModal({ onSubmit, onClose, backendOnline, initialV
           <button
             className="btn btn--primary"
             disabled={!valid || !backendOnline}
-            onClick={() => onSubmit(form)}
+            onClick={() =>
+              onSubmit({
+                ...form,
+                repo_url: repoCheck.normalized,
+                bug_description: form.bug_description.trim(),
+                target_test: form.target_test.trim(),
+                full_suite_test: (form.full_suite_test ?? '').trim(),
+              })
+            }
           >
             <ChevronRight size={15} /> Start Search &amp; Verification
           </button>

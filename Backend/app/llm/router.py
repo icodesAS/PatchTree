@@ -1,3 +1,4 @@
+from contextvars import ContextVar, Token
 import logging
 import os
 from pathlib import Path
@@ -12,6 +13,17 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 logger = logging.getLogger(__name__)
 
 _http2_clients: dict[str, AsyncOpenAI] = {}
+_run_llm_calls: ContextVar[list[int] | None] = ContextVar("_run_llm_calls", default=None)
+
+
+def start_run_llm_budget() -> Token:
+    """Initialize a shared per-run live LLM call counter across concurrent child tasks."""
+    return _run_llm_calls.set([0])
+
+
+def end_run_llm_budget(token: Token) -> None:
+    """Reset the per-run live LLM call counter context variable."""
+    _run_llm_calls.reset(token)
 
 
 def _get_llm_client(api_key: str, base_url: str) -> AsyncOpenAI:
@@ -68,6 +80,14 @@ async def call_model(job: str, prompt: str, system_prompt: str | None = None, te
 
     key = os.getenv("NEBIUS_API_KEY")
     if key:
+        max_calls = int(os.getenv("MAX_LLM_CALLS_PER_RUN", "12"))
+        counter = _run_llm_calls.get()
+        if counter is not None:
+            if counter[0] >= max_calls:
+                raise RuntimeError(
+                    f"Per-run LLM circuit breaker tripped ({counter[0]}/{max_calls} calls) to protect Nebius credits."
+                )
+            counter[0] += 1
         try:
             client = _get_llm_client(key, base_url)
             messages = []

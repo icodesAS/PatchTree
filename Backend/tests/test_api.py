@@ -210,5 +210,70 @@ class APITests(unittest.TestCase):
         self.assertEqual(response.headers["access-control-allow-origin"], "*")
 
 
+    def test_pasted_command_or_blank_repo_url_returns_422(self):
+        with patch.object(main, "run_pipeline") as task:
+            for bad_url in ("pytest tests/test_discount.py::test_x", "   ", "not-a-url"):
+                with self.subTest(repo_url=bad_url):
+                    res = self.client.post("/runs", json={**REQUEST, "repo_url": bad_url})
+                    self.assertEqual(res.status_code, 422)
+            task.assert_not_called()
+
+    def test_bare_github_domain_is_normalized(self):
+        with patch.object(main, "_run_pipeline", new_callable=AsyncMock):
+            res = self.client.post("/runs", json={**REQUEST, "repo_url": "github.com/example/repo"})
+            self.assertEqual(res.status_code, 201)
+            self.assertEqual(res.json()["repo_url"], "https://github.com/example/repo")
+
+    def test_pipeline_timeout_marks_failed_and_releases_concurrency_lock(self):
+        import asyncio as _asyncio
+
+        async def slow_pipeline(run, *args, **kwargs):
+            await _asyncio.sleep(1.0)
+            return run, []
+
+        with (
+            patch.object(main, "RUN_TIMEOUT_SECONDS", 0.02),
+            patch.object(main, "run_pipeline", side_effect=slow_pipeline),
+            self.assertLogs(main.logger, level="ERROR"),
+        ):
+            timed_out = self.create_run()
+
+        final_run = self.client.get(f"/runs/{timed_out['run_id']}").json()
+        self.assertEqual(final_run["status"], "failed")
+        self.assertIn("Timed Out", final_run["confidence_report"])
+        # Concurrency lock must be released so the next run succeeds
+        next_run = self.create_run()
+        self.assertEqual(self.client.get(f"/runs/{next_run['run_id']}").json()["status"], "complete")
+
+    def test_per_run_llm_circuit_breaker(self):
+        import asyncio as _asyncio
+        from types import SimpleNamespace
+        from app.llm import router
+
+        fake_resp = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="diff"))],
+            usage=SimpleNamespace(prompt_tokens=5, completion_tokens=5),
+        )
+        fake_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock(return_value=fake_resp)))
+        )
+
+        async def _exercise():
+            tok = router.start_run_llm_budget()
+            try:
+                await router.call_model("generate_patch_minimal", "p1")
+                await router.call_model("generate_patch_minimal", "p2")
+                with self.assertRaises(RuntimeError):
+                    await router.call_model("generate_patch_minimal", "p3")
+            finally:
+                router.end_run_llm_budget(tok)
+
+        with (
+            patch.dict(os.environ, {"NEBIUS_API_KEY": "fake-key", "MAX_LLM_CALLS_PER_RUN": "2"}),
+            patch.object(router, "_get_llm_client", return_value=fake_client),
+        ):
+            _asyncio.run(_exercise())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
