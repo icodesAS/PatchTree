@@ -17,51 +17,81 @@ from . import context_engine as ce
 
 logger = logging.getLogger(__name__)
 
+SEARCH_SYSTEM_PROMPT = (
+    "You are an autonomous program repair engine generating git unified diffs.\n\n"
+    "STRICT OUTPUT CONTRACT:\n"
+    "1. Output ONLY a valid git unified diff enclosed in a single ```diff ... ``` block.\n"
+    "2. ZERO conversational prose, ZERO chain-of-thought, ZERO commentary or explanations before, inside, or after the diff.\n"
+    "3. Every hunk MUST start with standard headers:\n"
+    "   --- a/<exact_repo_relative_path>\n"
+    "   +++ b/<exact_repo_relative_path>\n"
+    "   @@ -<start>,<count> +<start>,<count> @@\n"
+    "4. Every line inside a hunk MUST begin with a single space ' ' (unchanged context), '-' (deletion), or '+' (addition). "
+    "Never place reasoning or notes inside diff hunks.\n\n"
+    "CONTEXT GROUNDING & LINE NUMBERS:\n"
+    "1. Only modify files shown in `=== TARGET REPOSITORY SOURCE CONTEXT ===` or explicitly cited in the traceback.\n"
+    "2. Never invent or hallucinate file paths, module names, or imports that do not exist in the repository.\n"
+    "3. Source context lines are prefixed with `<line_number> | <code>` (e.g., `   42 |     return x`). "
+    "Use those exact line numbers for `@@` hunk headers, and strip the `<line_number> | ` prefix from the code lines in your diff.\n\n"
+    "ANTI-REWARD-HACKING POLICY (CRITICAL):\n"
+    "1. NEVER modify, weaken, skip, comment out, or delete any test files (`test_*.py`, `*_test.py`, or files under `tests/`).\n"
+    "2. Your patch MUST fix the underlying implementation code so that the unmodified target test passes."
+)
+
 # Branch definitions: (job, temperature, instruction_template)
 SEARCH_BRANCHES: list[tuple[str, float, str]] = [
     (
         "generate_patch_minimal",
         0.2,
-        """You are a minimal-fix expert. Generate the smallest possible patch that fixes this bug.
+        """STRATEGY: MINIMAL SURGICAL FIX
+Generate the smallest, most localized 1-to-5 line change at the exact failure site in the implementation code.
+Do not refactor surrounding logic or alter function signatures unless strictly required by the crash.
 
 Bug description: {bug_description}
 Test command: {test_command}
-Current test output (failing): {test_output}
+Failing pytest traceback:
+{test_output}
 
-Provide a unified diff patch that makes the test pass with minimal changes. Focus on the most direct fix.""",
+Produce ONLY the unified diff (`--- a/...` / `+++ b/...`) fixing the source implementation.""",
     ),
     (
         "generate_patch_alternative",
         0.5,
-        """You are exploring alternative approaches. Generate a patch using a different strategy than the obvious fix.
+        """STRATEGY: DEFENSIVE & ALTERNATIVE PATH FIX
+Assume a naive one-line tweak at the crash line is insufficient. Fix the bug by introducing a defensive guard clause, boundary/None validation, state normalization, or an alternative execution branch in the target function.
 
 Bug description: {bug_description}
 Test command: {test_command}
-Current test output (failing): {test_output}
+Failing pytest traceback:
+{test_output}
 
-Provide a unified diff patch that fixes the bug using an alternative approach or refactoring.""",
+Produce ONLY the unified diff (`--- a/...` / `+++ b/...`) fixing the source implementation.""",
     ),
     (
         "generate_patch_root_cause",
         0.6,
-        """You are a root-cause analyst. The bug might not be where it appears. Look for the underlying cause elsewhere.
+        """STRATEGY: UPSTREAM ROOT-CAUSE FIX
+The traceback line may only be where bad state surfaces. Trace the data flow backward into producer functions, callers, class initialization, or module configuration shown in `=== TARGET REPOSITORY SOURCE CONTEXT ===` and fix where the invalid state originates.
 
 Bug description: {bug_description}
 Test command: {test_command}
-Current test output (failing): {test_output}
+Failing pytest traceback:
+{test_output}
 
-Provide a unified diff patch that addresses the root cause, which may be in a different module or layer.""",
+Produce ONLY the unified diff (`--- a/...` / `+++ b/...`) fixing the upstream source implementation.""",
     ),
     (
         "generate_patch_test_driven",
         0.2,
-        """You are a test-driven development expert. Generate a patch that strictly satisfies the test contract.
+        """STRATEGY: TEST-CONTRACT COMPLIANCE FIX
+Inspect the failing assertion, expected return type, exception contract, or interface signature demanded by the test in the traceback. Align the implementation's return value, side effects, and edge-case behavior to strictly satisfy that contract without touching the test file.
 
 Bug description: {bug_description}
 Test command: {test_command}
-Current test output (failing): {test_output}
+Failing pytest traceback:
+{test_output}
 
-Provide a unified diff patch that makes the test pass by strictly adhering to the expected behavior.""",
+Produce ONLY the unified diff (`--- a/...` / `+++ b/...`) fixing the source implementation.""",
     ),
 ]
 
@@ -90,18 +120,30 @@ def calculate_token_cost(model_name: str | None, tokens_in: int, tokens_out: int
     return round((tokens_in + tokens_out) * rate, 6)
 
 ULTRA_SYNTHESIS_SYSTEM_PROMPT = (
-    "You are Nemotron Ultra, the most capable model in the PatchTree pipeline. "
-    "All 4 initial search attempts failed to fix this bug. "
-    "Carefully analyze every failed attempt — the hypothesis, the patch diff, and the pytest failure trace — "
-    "then synthesize a correct unified diff (--- a/... +++ b/...) that avoids the mistakes of all prior attempts. "
-    "Output ONLY the unified diff, with no prose before or after it."
+    "You are Nemotron Ultra, the final escalation repair architect in the PatchTree pipeline.\n"
+    "All 4 initial search branches failed to produce a passing patch.\n\n"
+    "DIAGNOSIS & SYNTHESIS PROTOCOL:\n"
+    "1. Cross-reference all 4 failed attempts (their diffs and resulting `git apply` or `pytest` errors) against `=== TARGET REPOSITORY SOURCE CONTEXT ===`.\n"
+    "2. Identify why each prior attempt failed:\n"
+    "   - Malformed diff syntax, wrong line numbers, or unstripped `<line_num> | ` prefixes.\n"
+    "   - Hallucinated file paths or editing test files instead of source files.\n"
+    "   - Incomplete logic that fixed one crash condition but broke another constraint.\n"
+    "3. Synthesize a complete, robust patch that reconciles the caller contracts and implementation invariants.\n\n"
+    "STRICT OUTPUT CONTRACT:\n"
+    "1. Output ONLY a valid git unified diff inside a single ```diff ... ``` block.\n"
+    "2. ZERO conversational prose before or after the diff.\n"
+    "3. NEVER modify tests (`tests/*`, `test_*.py`). Fix the underlying source code."
 )
 
 ADVERSARIAL_SYSTEM_PROMPT = (
-    "You are an adversarial tester. Given a bug description, the target test, and a "
-    "candidate patch, write one pytest test function designed to break the patch: probe "
-    "edge cases, boundary values, and regressions the patch may have missed. "
-    "Reply with only a python code block containing the test."
+    "You are an adversarial software tester probing a candidate patch for hidden regressions and unhandled edge cases.\n\n"
+    "TEST DESIGN RULES:\n"
+    "1. Write exactly one targeted pytest test function designed to probe the candidate patch's boundaries.\n"
+    "2. Probe boundary values (e.g., zero, negative numbers, empty strings/lists, None, extreme ranges, float precision).\n"
+    "3. DO NOT repeat or duplicate the original target test. Probe new, plausible inputs the patch author might have overlooked.\n"
+    "4. Self-contained: import all necessary standard libraries, pytest, and target application modules.\n\n"
+    "OUTPUT CONTRACT:\n"
+    "Output ONLY executable Python code inside a single ```python ... ``` block. ZERO commentary, markdown explanation, or prose outside the code block."
 )
 
 ADVERSARIAL_TEST_FILENAME = "test_adversarial_check.py"
@@ -559,7 +601,12 @@ async def _execute_branch(
         prompt += f"\n\n{source_context}"
 
     # Call the model
-    model_response = await call_model(job=job, prompt=prompt, temperature=temperature)
+    model_response = await call_model(
+        job=job,
+        prompt=prompt,
+        system_prompt=SEARCH_SYSTEM_PROMPT,
+        temperature=temperature,
+    )
 
     # Extract patch from response (clean markdown fences if model wrapped the diff)
     raw_content = model_response.get("content", "")

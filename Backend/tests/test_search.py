@@ -94,3 +94,65 @@ async def test_search_round():
 
 if __name__ == "__main__":
     asyncio.run(test_search_round())
+
+
+# ---------- real-filesystem search round ----------
+
+from unittest.mock import AsyncMock, patch  # noqa: E402
+
+import pytest  # noqa: E402
+
+from tests.local_sandbox import BUGGY_SOURCE, GARBAGE_DIFF, VALID_DIFF, LocalGitSandbox  # noqa: E402
+
+
+def _llm(diff: str) -> AsyncMock:
+    return AsyncMock(return_value={"content": f"```diff\n{diff}```", "model": "stub/nano", "tokens_in": 1, "tokens_out": 1})
+
+
+async def _real_round(git_repo, diff: str):
+    run = Run(run_id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc), repo_url="https://github.com/realorg/realrepo",
+              bug_description="add subtracts", target_test="pytest -q test_calc.py")
+    sandbox = LocalGitSandbox(git_repo)
+    root = reproduce(run, sandbox)
+    assert root.test_result == "fail"
+    llm = _llm(diff)
+    with patch("app.orchestrator.pipeline.call_model", llm):
+        nodes = await search_round(run, root, sandbox=sandbox)
+    return nodes, llm
+
+
+async def test_search_round_rejects_unusable_patches_on_real_git(git_repo):
+    nodes, llm = await _real_round(git_repo, GARBAGE_DIFF)
+    assert llm.await_count == 4
+    assert all(n.test_result == "error" and "Patch application failed" in n.test_output for n in nodes)
+    assert (git_repo / "calc.py").read_text() == BUGGY_SOURCE
+
+
+@pytest.mark.xfail(strict=True, reason="BUG: _execute_branch runs `apply_patch <id>.diff` without ever writing patch_diff to disk")
+async def test_search_round_valid_patch_passes_on_real_git(git_repo):
+    nodes, _ = await _real_round(git_repo, VALID_DIFF)
+    assert [n.test_result for n in nodes] == ["pass"] * 4
+
+
+@pytest.mark.xfail(strict=True, reason="BUG: bootstrap installs a no-op `echo 'patch applied'` apply_patch instead of `git apply`")
+def test_container_apply_patch_script_uses_git_apply():
+    import inspect
+    from app.sandbox import contree_client
+
+    assert "git apply" in inspect.getsource(contree_client.SandboxManager.spawn)
+
+
+@pytest.mark.xfail(strict=True, reason="BUG: real-mode run_command reports exit 0 'patch applied (intercepted)' for failed patches")
+def test_failed_patch_in_container_is_not_reported_as_success():
+    class FakeImage:
+        uuid, stdout, stderr, exit_code = "u", b"", b"error: patch failed", 1
+
+        def run(self, **kw):
+            return self
+
+        def wait(self):
+            return self
+
+    mgr = SandboxManager(force_stub=True)
+    mgr.stub, mgr._image = False, FakeImage()
+    assert mgr.run_command("apply_patch x.diff").exit_code != 0

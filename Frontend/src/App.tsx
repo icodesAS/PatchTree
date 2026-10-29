@@ -4,10 +4,6 @@ import {
   type Node as RFNode, type Edge, type NodeTypes, type EdgeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import {
-  GitBranch, Zap, DollarSign, Clock, Percent,
-  Shield, Plus, CheckCircle, Loader, History,
-} from 'lucide-react';
 import type { PatchNode, Run, RunCreate } from './types';
 import { mockData } from './mockData';
 import { checkHealth, createRun, getRun, getTree, pollUntilComplete, HttpError } from './api';
@@ -19,8 +15,11 @@ import HistorySidebar from './components/HistorySidebar';
 import PNode from './components/PNode';
 import ParticleEdge from './components/ParticleEdge';
 import Launchpad, { type PresetDef } from './components/Launchpad';
+import TopBar from './components/TopBar';
+import CanvasLegend from './components/CanvasLegend';
 import './App.css';
 import './patchtree-ui.css';
+import './patchtree-hud.css';
 
 // ── Branch config ─────────────────────────────────────────────────────────────
 const BRANCH_COLORS: Record<string, string> = {
@@ -70,38 +69,6 @@ function getOrCreateClientId(): string {
 
 const nodeTypes: NodeTypes = { patchNode: PNode };
 const edgeTypes: EdgeTypes = { particle: ParticleEdge };
-
-// ── Pipeline stepper ──────────────────────────────────────────────────────────
-function PipelineStepper({
-  stages,
-  currentStage,
-  elapsed,
-}: {
-  stages: StageItem[];
-  currentStage: number;
-  elapsed: number;
-}) {
-  return (
-    <div className="stepper">
-      {stages.map((s, i) => {
-        const done = i < currentStage;
-        const active = i === currentStage;
-        return (
-          <div key={s.id} className={`step ${done ? 'step--done' : active ? 'step--active' : ''}`}>
-            <div className="step__icon">
-              {done ? <CheckCircle size={13} /> : active ? <Loader size={13} className="spin" /> : <span>{i + 1}</span>}
-            </div>
-            <span className="step__label">{s.label}</span>
-            {i < stages.length - 1 && <div className="step__line" />}
-          </div>
-        );
-      })}
-      {elapsed > 0 && (
-        <div className="stepper__timer"><Clock size={12} />{elapsed}s</div>
-      )}
-    </div>
-  );
-}
 
 function CanvasAutoFit({ runId, nodeCount }: { runId?: string; nodeCount: number }) {
   const { fitView } = useReactFlow();
@@ -355,6 +322,12 @@ export default function App() {
     { id: 'report',      label: 'Ultra Report' },
   ], [hasFullSuite]);
 
+  const activeLabels = useMemo(() => {
+    if (hasFullSuite) return BRANCH_LABELS;
+    const { full_suite: _, ...rest } = BRANCH_LABELS;
+    return rest;
+  }, [hasFullSuite]);
+
   // Ancestors of winner for primary golden spine
   const winnerNodeId = run?.winner_node_id;
   const winningPathIds = useMemo(() => {
@@ -483,87 +456,25 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* ── Top Bar ── */}
-      <header className="topbar pt-header" data-run={loading ? 'running' : run?.status === 'complete' ? 'done' : 'idle'}>
-        <div
-          className="topbar__brand"
-          onClick={resetToHome}
-          style={{ cursor: 'pointer' }}
-          title="Return to Launchpad"
-        >
-          <GitBranch size={20} className="topbar__icon" />
-          <span className="topbar__title">PatchTree</span>
-          <span className={`conn-badge ${backendOnline ? 'conn-badge--on' : 'conn-badge--off'}`}>
-            {backendOnline ? '🟢 Connected' : '🔴 Offline'}
-          </span>
-        </div>
-
-        {run && (
-          <div className="topbar__telemetry">
-            <div className="telemetry__item">
-              <Zap size={13} />
-              <span className={`telemetry__status telemetry__status--${run.status}`}>{run.status.toUpperCase()}</span>
-            </div>
-            {run.total_cost_usd != null && (
-              <div className="telemetry__item"><DollarSign size={13} /><span>${run.total_cost_usd.toFixed(4)}</span></div>
-            )}
-            {run.total_wall_time_seconds != null && (
-              <div className="telemetry__item"><Clock size={13} /><span>{run.total_wall_time_seconds.toFixed(1)}s</span></div>
-            )}
-            {run.confidence_score != null && (
-              <div className="telemetry__item telemetry__item--highlight">
-                <Percent size={13} />
-                <span>{Math.round(run.confidence_score <= 1 ? run.confidence_score * 100 : run.confidence_score)}%</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="topbar__controls">
-          <button className="btn btn--secondary" onClick={() => setShowHistory(true)} title="View run history">
-            <History size={14} /> History
-          </button>
-          {(run?.confidence_report || run?.status === 'complete' || run?.status === 'failed') && (
-            <button className="btn btn--ghost" onClick={() => setShowReport(true)}>
-              <Shield size={14} /> View Report
-            </button>
-          )}
-          {patchNodes.length > 0 && (
-            <button className="btn btn--ghost" onClick={resetToHome} title="Return to Launchpad">
-              ✕ Close Run
-            </button>
-          )}
-          <button className="btn btn--primary" onClick={() => setShowNewRun(true)} disabled={loading}>
-            <Plus size={14} /> New Run
-          </button>
-        </div>
-      </header>
+      {/* ── Top Bar HUD ── */}
+      <TopBar
+        backendOnline={backendOnline}
+        loading={loading}
+        run={run}
+        elapsed={elapsed}
+        stages={stages}
+        currentStage={currentStage}
+        hasNodes={patchNodes.length > 0}
+        onHome={resetToHome}
+        onHistory={() => setShowHistory(true)}
+        onReport={() => setShowReport(true)}
+        onNewRun={() => setShowNewRun(true)}
+      />
 
       {/* ── Offline banner ── */}
       {offlineBanner && (
         <div className="offline-banner">
           ⚠ Backend not detected at <code>{import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}</code>. Ensure the FastAPI server is running.
-        </div>
-      )}
-
-      {/* ── Pipeline stepper (only while running or when nodes present) ── */}
-      {(loading || (run && patchNodes.length > 0)) && (
-        <PipelineStepper stages={stages} currentStage={currentStage} elapsed={loading ? elapsed : 0} />
-      )}
-
-      {/* ── Legend ── */}
-      {patchNodes.length > 0 && (
-        <div className="legend">
-          {Object.entries(BRANCH_LABELS)
-            .filter(([type]) => type !== 'full_suite' || hasFullSuite)
-            .map(([type, label]) => (
-              <div key={type} className="legend__item">
-                <span className="legend__dot" style={{ background: BRANCH_COLORS[type] }} />{label}
-              </div>
-            ))}
-          <div className="legend__item">
-            <span className="legend__dot legend__dot--animated" />Animated = Live Packet
-          </div>
         </div>
       )}
 
@@ -595,6 +506,7 @@ export default function App() {
               nodeColor={(n) => BRANCH_COLORS[(n.data as { patchNode: PatchNode }).patchNode?.branch_type] ?? '#6b7280'}
               style={{ background: '#07090e', borderColor: '#1e2638' }}
             />
+            {patchNodes.length > 0 && <CanvasLegend colors={BRANCH_COLORS} labels={activeLabels} />}
           </ReactFlow>
         )}
         {selectedNode && <NodeInspector node={selectedNode} onClose={() => setSelectedId(null)} />}

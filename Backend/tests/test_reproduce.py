@@ -216,3 +216,86 @@ if __name__ == "__main__":
     test_nested_requirements_txt()
     test_smart_context_windowing()
     print("All reproduction and context tests passed!")
+
+
+# ---------- real filesystem / `git apply` integration ----------
+
+import pytest  # noqa: E402
+
+from app.orchestrator.pipeline import is_reproduction_error  # noqa: E402
+from tests.local_sandbox import (  # noqa: E402
+    BUGGY_SOURCE, GARBAGE_DIFF, MISMATCHED_DIFF, VALID_DIFF, LocalGitSandbox,
+)
+
+
+def _git_run(**kw) -> Run:
+    return Run(run_id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc),
+               repo_url="https://github.com/realorg/realrepo", bug_description="add subtracts",
+               target_test="pytest test_calc.py", **kw)
+
+
+def test_valid_diff_changes_file_and_flips_pytest_to_green(git_repo):
+    sandbox = LocalGitSandbox(git_repo)
+    assert sandbox.run_command("pytest -q test_calc.py").exit_code == 1
+
+    (git_repo / "fix.diff").write_bytes(VALID_DIFF.encode())
+    res = sandbox.run_command("apply_patch fix.diff")
+
+    assert res.exit_code == 0, res.output
+    assert "a + b" in (git_repo / "calc.py").read_text()
+    assert sandbox.run_command("pytest -q test_calc.py").exit_code == 0
+
+
+@pytest.mark.parametrize("diff", [MISMATCHED_DIFF, GARBAGE_DIFF], ids=["mismatched-hunk", "not-a-diff"])
+def test_malformed_diff_is_rejected_and_file_untouched(git_repo, diff):
+    sandbox = LocalGitSandbox(git_repo)
+    (git_repo / "bad.diff").write_bytes(diff.encode())
+
+    res = sandbox.run_command("apply_patch bad.diff")
+
+    assert res.exit_code != 0
+    assert (git_repo / "calc.py").read_text() == BUGGY_SOURCE
+    assert sandbox.run_command("pytest -q test_calc.py").exit_code == 1
+
+
+def test_fork_isolation_on_real_filesystem(git_repo):
+    root = LocalGitSandbox(git_repo)
+    cp = root.checkpoint()
+    fork = root.fork(cp)
+    (fork.root / "fix.diff").write_bytes(VALID_DIFF.encode())
+    assert fork.run_command("apply_patch fix.diff").exit_code == 0
+    assert fork.run_command("pytest -q test_calc.py").exit_code == 0
+    assert root.run_command("pytest -q test_calc.py").exit_code == 1  # parent unaffected
+
+
+def test_reproduce_classifies_real_pytest_outcomes(git_repo):
+    sandbox = LocalGitSandbox(git_repo)
+    assert reproduce(_git_run(), sandbox).test_result == "fail"  # exit 1: genuine assertion failure
+
+    missing = _git_run()
+    missing.target_test = "pytest does_not_exist.py"
+    assert reproduce(missing, sandbox).test_result == "error"  # exit 4: not a reproducible bug
+
+    (git_repo / "empty_test.py").write_text("x = 1\n")
+    empty = _git_run()
+    empty.target_test = "pytest empty_test.py"
+    assert reproduce(empty, sandbox).test_result == "error"  # exit 5: no tests collected
+
+    (git_repo / "calc.py").write_bytes(b"def add(a, b):\n    return a + b\n")
+    assert reproduce(_git_run(), sandbox).test_result == "pass"
+
+
+@pytest.mark.parametrize("exit_code,output,expected", [
+    (0, "1 passed", False),
+    (1, "FAILED test_calc.py::test_add - assert -1 == 5", False),
+    (1, "E   AssertionError: assert 0 == 1", False),
+    (4, "ERROR: file or directory not found: x.py", True),
+    (5, "no tests ran", True),  # pytest "no tests collected"
+    (5, "FAILED test_x.py - AssertionError", True),  # exit code wins over output text
+    (127, "", True),
+    (1, "/bin/sh: 1: pytest: not found", True),
+    (2, "Interrupted: 1 error during collection", True),
+    (1, "FileNotFoundError: [Errno 2] No such file or directory: 'data.csv'", True),
+])
+def test_is_reproduction_error_matrix(exit_code, output, expected):
+    assert is_reproduction_error(exit_code, output) is expected
