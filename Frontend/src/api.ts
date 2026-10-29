@@ -23,7 +23,10 @@ export async function checkHealth(): Promise<boolean> {
 export async function createRun(payload: RunCreate): Promise<Run> {
   const res = await fetch(`${BASE}/runs`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-PatchTree-Client': 'patchtree-web-v1',
+    },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {

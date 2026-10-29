@@ -83,7 +83,7 @@ async def call_model(job: str, prompt: str, system_prompt: str | None = None, te
 
     key = os.getenv("NEBIUS_API_KEY")
     if key:
-        max_calls = int(os.getenv("MAX_LLM_CALLS_PER_RUN", "12"))
+        max_calls = int(os.getenv("MAX_LLM_CALLS_PER_RUN", "9"))
         counter = _run_llm_calls.get()
         if counter is not None:
             if counter[0] >= max_calls:

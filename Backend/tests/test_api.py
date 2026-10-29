@@ -275,5 +275,36 @@ class APITests(unittest.TestCase):
             _asyncio.run(_exercise())
 
 
+    def test_production_origin_and_handshake_lock(self):
+        with (
+            patch.dict(os.environ, {"RENDER": "true"}),
+            patch.object(main, "_run_pipeline", new_callable=AsyncMock),
+        ):
+            # Direct script / curl without frontend handshake or trusted origin -> 403
+            res_no_headers = self.client.post("/runs", json=REQUEST)
+            self.assertEqual(res_no_headers.status_code, 403)
+
+            res_bad_origin = self.client.post(
+                "/runs",
+                json=REQUEST,
+                headers={"Origin": "https://evil.example.com", "X-PatchTree-Client": "patchtree-web-v1"},
+            )
+            self.assertEqual(res_bad_origin.status_code, 403)
+
+            # Official Vercel domain + handshake -> 201
+            res_ok = self.client.post(
+                "/runs",
+                json=REQUEST,
+                headers={"Origin": "https://patch-tree.vercel.app", "X-PatchTree-Client": "patchtree-web-v1"},
+            )
+            self.assertEqual(res_ok.status_code, 201)
+
+    def test_oversized_input_payload_rejected_with_422(self):
+        with patch.object(main, "run_pipeline") as task:
+            res = self.client.post("/runs", json={**REQUEST, "bug_description": "x" * 2500})
+            self.assertEqual(res.status_code, 422)
+            task.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

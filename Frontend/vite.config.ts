@@ -5,21 +5,17 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react()],
   build: {
-    rollupOptions: {
+    chunkSizeWarningLimit: 1000,
+    rolldownOptions: {
       output: {
-        manualChunks(id: string) {
-          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/')) {
-            return 'vendor';
-          }
-          if (id.includes('node_modules/@xyflow/') || id.includes('node_modules/dagre/')) {
-            return 'reactflow';
-          }
-          if (id.includes('node_modules/lucide-react/')) {
-            return 'icons';
-          }
+        codeSplitting: {
+          groups: [
+            { name: 'vendor', test: /node_modules[\\/](react|react-dom)[\\/]/ },
+            { name: 'reactflow', test: /node_modules[\\/](@xyflow|dagre)[\\/]/ },
+            { name: 'icons', test: /node_modules[\\/]lucide-react[\\/]/ },
+          ],
         },
       },
     },
-    chunkSizeWarningLimit: 1000,
   },
 })
