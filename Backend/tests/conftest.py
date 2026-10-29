@@ -19,6 +19,11 @@ def offline_env(monkeypatch):
     if not LIVE:
         monkeypatch.setenv("NEBIUS_API_KEY", "")
         monkeypatch.setenv("PATCHTREE_FORCE_STUB", "1")
+        for var in ("SUPABASE_URL", "VITE_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_KEY", "VITE_SUPABASE_ANON_KEY"):
+            monkeypatch.delenv(var, raising=False)  # DatabaseManager -> in-memory, no network
+        from app.db import client as db_client
+
+        monkeypatch.setattr(db_client.db, "_client", None)  # module-level singleton was built from .env at import
 
 
 @pytest.fixture
