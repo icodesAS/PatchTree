@@ -51,11 +51,27 @@ class SandboxManager:
         if not self.stub:
             try:
                 self._image = self._client.images.oci(image)
-                # Auto-install build essentials and pytest for real cloud containers
-                self.run_command("apt-get update -qq && apt-get install -qq -y --no-install-recommends build-essential git curl libpq-dev libffi-dev 2>/dev/null || true")
-                self.run_command("pip install --prefer-binary --quiet pytest")
-                # Install apply_patch shim so patch application works seamlessly
-                shim = (
+
+                # Prepare context engine shim payload
+                engine_file = Path(__file__).resolve().parents[1] / "orchestrator" / "context_engine.py"
+                engine_b64 = ""
+                if engine_file.is_file():
+                    try:
+                        engine_b64 = base64.b64encode(engine_file.read_bytes()).decode("ascii")
+                    except Exception as e:
+                        logger.warning("Could not read context_engine file: %s", e)
+
+                # Single compound bootstrap script (skips apt-get if tools exist; exports PYTHONPATH)
+                bootstrap_script = (
+                    "rm -f /usr/lib/python*/EXTERNALLY-MANAGED 2>/dev/null || true && "
+                    "echo 'export PIP_BREAK_SYSTEM_PACKAGES=1' >> /etc/environment 2>/dev/null || true && "
+                    "echo 'export PIP_BREAK_SYSTEM_PACKAGES=1' >> /etc/profile 2>/dev/null || true && "
+                    "echo 'export PYTHONPATH=\"/app:/app/Backend:/app/src:$PYTHONPATH\"' >> /etc/environment 2>/dev/null || true && "
+                    "echo 'export PYTHONPATH=\"/app:/app/Backend:/app/src:$PYTHONPATH\"' >> /etc/profile 2>/dev/null || true && "
+                    "if ! command -v git >/dev/null 2>&1 || ! command -v gcc >/dev/null 2>&1; then "
+                    "  apt-get update -qq && apt-get install -qq -y --no-install-recommends build-essential git curl libpq-dev libffi-dev 2>/dev/null || true; "
+                    "fi && "
+                    "pip install --prefer-binary --quiet pytest && "
                     "cat << 'EOF' > /usr/local/bin/apply_patch && chmod +x /usr/local/bin/apply_patch\n"
                     "#!/bin/sh\n"
                     "echo 'patch applied'\n"
@@ -64,16 +80,10 @@ class SandboxManager:
                     "cp /usr/local/bin/apply_patch /usr/bin/apply_patch 2>/dev/null || true\n"
                     "cp /usr/local/bin/apply_patch /bin/apply_patch 2>/dev/null || true"
                 )
-                self.run_command(shim)
+                if engine_b64:
+                    bootstrap_script += f" && echo '{engine_b64}' | base64 -d > /usr/local/bin/context_engine.py && chmod +x /usr/local/bin/context_engine.py 2>/dev/null || true"
 
-                # Install context_engine.py into container for zero-dependency AST source extraction
-                engine_file = Path(__file__).resolve().parents[1] / "orchestrator" / "context_engine.py"
-                if engine_file.is_file():
-                    try:
-                        engine_b64 = base64.b64encode(engine_file.read_bytes()).decode("ascii")
-                        self.run_command(f"echo '{engine_b64}' | base64 -d > /usr/local/bin/context_engine.py && chmod +x /usr/local/bin/context_engine.py 2>/dev/null || true")
-                    except Exception as e:
-                        logger.warning("Could not inject context_engine shim: %s", e)
+                self.run_command(bootstrap_script)
 
                 # Clone real external git repo into container if specified
                 repo = (repo_url or "").strip()
@@ -88,10 +98,14 @@ class SandboxManager:
     def run_command(self, cmd: str) -> CommandResult:
         if not self.stub and self._image is not None:
             try:
-                # If /app exists and command is not internal setup, execute from /app
+                # Prepend PEP 668 and PYTHONPATH exports and execute from /app
                 exec_cmd = cmd
-                if not cmd.startswith("cat <<") and not cmd.startswith("git clone") and not cmd.startswith("pip install"):
-                    exec_cmd = f"if [ -d /app ]; then cd /app; fi; {cmd}"
+                if not cmd.startswith("cat <<") and not cmd.startswith("git clone"):
+                    exec_cmd = (
+                        'export PIP_BREAK_SYSTEM_PACKAGES=1; '
+                        'export PYTHONPATH="/app:/app/Backend:/app/src:$PYTHONPATH"; '
+                        f'if [ -d /app ]; then cd /app; fi; {cmd}'
+                    )
 
                 if cmd.startswith(PATCH_MARKER):
                     res = self._image.run(shell=exec_cmd, disposable=False).wait()

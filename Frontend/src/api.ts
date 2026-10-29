@@ -13,7 +13,7 @@ export class HttpError extends Error {
 
 export async function checkHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(5000) });
     return res.ok;
   } catch {
     return false;
@@ -56,7 +56,7 @@ export function pollUntilComplete(
   runId: string,
   onUpdate: (run: Run, nodes: PatchNode[]) => void,
   intervalMs = 1500,
-  maxConsecutiveErrors = 4,
+  maxConsecutiveErrors = 6,
 ): { promise: Promise<void>; cancel: () => void } {
   let cancelled = false;
   let timerId: ReturnType<typeof setTimeout> | null = null;

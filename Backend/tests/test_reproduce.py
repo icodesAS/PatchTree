@@ -58,8 +58,88 @@ def test_missing_requirements_txt():
 
     root = reproduce(run, sandbox)
     assert root.test_result == "error", f"expected error, got {root.test_result}"
-    assert "No requirements.txt file found in repository" in root.test_output
+    assert "No requirements.txt, pyproject.toml, or setup.py" in root.test_output
     print("test_missing_requirements_txt: OK")
+
+
+def test_pyproject_toml_install():
+    """Verify that a repository with pyproject.toml and no requirements.txt installs in editable mode."""
+    req = RunCreate(
+        repo_url="https://github.com/realorg/tomlrepo",
+        bug_description="toml package bug",
+        target_test="pytest tests/test_bug.py",
+    )
+    run = Run(run_id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc), **req.model_dump())
+
+    sandbox = SandboxManager(force_stub=True)
+    sandbox.stub = False
+    sandbox.spawn = lambda *args, **kwargs: None
+    sandbox._image = object()
+
+    commands_executed = []
+
+    def mock_run_command(cmd: str) -> CommandResult:
+        commands_executed.append(cmd)
+        if "test -d /app" in cmd:
+            return CommandResult(0, "")
+        if "find /app -name '*requirements*.txt'" in cmd:
+            return CommandResult(0, "")  # No requirements.txt
+        if "find /app -name 'pyproject.toml'" in cmd:
+            return CommandResult(0, "/app/pyproject.toml\n")  # pyproject.toml found!
+        if "pip install" in cmd:
+            return CommandResult(0, "Successfully installed tomlrepo")
+        if "pytest" in cmd:
+            return CommandResult(1, "FAILED tests/test_bug.py - AssertionError")
+        return CommandResult(0, "")
+
+    sandbox.run_command = mock_run_command
+
+    root = reproduce(run, sandbox)
+    assert any("pip install --prefer-binary --quiet -e '/app'" in c for c in commands_executed), (
+        f"Did not install from pyproject.toml: {commands_executed}"
+    )
+    assert root.test_result == "fail"
+    print("test_pyproject_toml_install: OK")
+
+
+def test_setup_py_install():
+    """Verify that a repository with setup.py and no requirements.txt installs in editable mode."""
+    req = RunCreate(
+        repo_url="https://github.com/realorg/setuppyrepo",
+        bug_description="setup.py package bug",
+        target_test="pytest tests/test_bug.py",
+    )
+    run = Run(run_id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc), **req.model_dump())
+
+    sandbox = SandboxManager(force_stub=True)
+    sandbox.stub = False
+    sandbox.spawn = lambda *args, **kwargs: None
+    sandbox._image = object()
+
+    commands_executed = []
+
+    def mock_run_command(cmd: str) -> CommandResult:
+        commands_executed.append(cmd)
+        if "test -d /app" in cmd:
+            return CommandResult(0, "")
+        if "find /app -name '*requirements*.txt'" in cmd:
+            return CommandResult(0, "")
+        if "find /app -name 'pyproject.toml'" in cmd:
+            return CommandResult(0, "/app/setup.py\n")  # setup.py found!
+        if "pip install" in cmd:
+            return CommandResult(0, "Successfully installed setuppyrepo")
+        if "pytest" in cmd:
+            return CommandResult(1, "FAILED tests/test_bug.py - AssertionError")
+        return CommandResult(0, "")
+
+    sandbox.run_command = mock_run_command
+
+    root = reproduce(run, sandbox)
+    assert any("pip install --prefer-binary --quiet -e '/app'" in c for c in commands_executed), (
+        f"Did not install from setup.py: {commands_executed}"
+    )
+    assert root.test_result == "fail"
+    print("test_setup_py_install: OK")
 
 
 def test_nested_requirements_txt():
@@ -131,6 +211,8 @@ def test_smart_context_windowing():
 if __name__ == "__main__":
     test_reproduce()
     test_missing_requirements_txt()
+    test_pyproject_toml_install()
+    test_setup_py_install()
     test_nested_requirements_txt()
     test_smart_context_windowing()
     print("All reproduction and context tests passed!")

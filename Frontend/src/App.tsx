@@ -195,13 +195,35 @@ export default function App() {
     try {
       const [fetchedRun, treeNodes] = await Promise.all([getRun(runId), getTree(runId)]);
       setRun(fetchedRun);
-      setPatchNodes(treeNodes);
+      if (treeNodes && treeNodes.length > 0) {
+        setPatchNodes(treeNodes);
+      } else if (fetchedRun.status === 'running') {
+        const initialRootNode: PatchNode = {
+          node_id: 'root-init',
+          run_id: runId,
+          parent_node_id: null,
+          branch_type: 'root',
+          hypothesis: `Cloning ${fetchedRun.repo_url} & executing reproduction test...`,
+          patch_diff: '',
+          test_command: fetchedRun.target_test || 'pytest',
+          test_result: null,
+          test_output: 'Sandbox microVM executing reproduction command:\n$ ' + (fetchedRun.target_test || 'pytest'),
+          model_used: 'none',
+          status: 'running',
+        };
+        setPatchNodes([initialRootNode]);
+        setSelectedId('root-init');
+      } else {
+        setPatchNodes([]);
+      }
       setOfflineBanner(false);
 
       if (fetchedRun.status === 'running') {
         const { promise, cancel } = pollUntilComplete(runId, (r, ns) => {
           setRun(r);
-          setPatchNodes(ns);
+          if (ns && ns.length > 0) {
+            setPatchNodes(ns);
+          }
         });
         pollCancelRef.current = cancel;
         await promise;
@@ -301,7 +323,9 @@ export default function App() {
       syncUrlAndStorage(newRun.run_id);
       const { promise, cancel } = pollUntilComplete(newRun.run_id, (r, ns) => {
         setRun(r);
-        setPatchNodes(ns);
+        if (ns && ns.length > 0) {
+          setPatchNodes(ns);
+        }
       });
       pollCancelRef.current = cancel;
       await promise;
@@ -545,7 +569,7 @@ export default function App() {
 
       {/* ── Canvas ── */}
       <main className="canvas-wrap pt-canvas" data-run={patchNodes.length === 0 ? 'empty' : loading ? 'running' : 'done'}>
-        {patchNodes.length === 0 ? (
+        {!run && !loading && patchNodes.length === 0 ? (
           <Launchpad
             onCustomRepo={handleCustomRepo}
             onSimulatePreset={handleSimulatePreset}

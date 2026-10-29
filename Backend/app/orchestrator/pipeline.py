@@ -153,12 +153,45 @@ def reproduce(run: Run, sandbox: SandboxManager) -> Node:
                     status="done",
                 )
 
-        # Search for requirements.txt (root or nested subfolders)
-        find_res = sandbox.run_command("find /app -name '*requirements*.txt' -o -name 'requirements.txt' 2>/dev/null | head -n 1")
-        req_path = find_res.output.strip().splitlines()[0] if find_res.output.strip() else ""
+        # Discover and install dependencies from requirements.txt, pyproject.toml, or setup.py
+        sandbox.run_command('export PYTHONPATH="/app:/app/Backend:/app/src:$PYTHONPATH"')
+        find_req = sandbox.run_command("find /app -name '*requirements*.txt' -o -name 'requirements.txt' 2>/dev/null | head -n 1")
+        req_path = find_req.output.strip().splitlines()[0] if find_req.output.strip() else ""
 
-        if not req_path:
-            logger.warning(f"No requirements.txt found in {repo_url}")
+        find_pkg = sandbox.run_command("find /app -name 'pyproject.toml' -o -name 'setup.py' 2>/dev/null | head -n 1")
+        pkg_path = find_pkg.output.strip().splitlines()[0] if find_pkg.output.strip() else ""
+
+        installed_any = False
+
+        if req_path:
+            logger.info(f"Installing dependencies from {req_path}...")
+            install_res = sandbox.run_command(f"pip install --prefer-binary --quiet -r '{req_path}'")
+            if install_res.exit_code != 0:
+                logger.warning(f"Dependency installation failed from {req_path}: {install_res.output}")
+                return Node(
+                    node_id=str(uuid.uuid4()),
+                    run_id=run.run_id,
+                    branch_type="root",
+                    checkpoint_id=sandbox.checkpoint(),
+                    test_command=run.target_test,
+                    test_result="error",
+                    test_output=f"Dependency installation failed from {req_path}:\n{install_res.output}",
+                    status="done",
+                )
+            installed_any = True
+
+        if pkg_path:
+            pkg_dir = os.path.dirname(pkg_path) or "/app"
+            logger.info(f"Installing project package from {pkg_path} in editable mode...")
+            flag = "--no-deps" if installed_any else "--prefer-binary"
+            pkg_res = sandbox.run_command(f"pip install {flag} --quiet -e '{pkg_dir}'")
+            if pkg_res.exit_code == 0:
+                installed_any = True
+            else:
+                logger.warning(f"Package install from {pkg_dir} failed (non-fatal): {pkg_res.output}")
+
+        if not installed_any and not req_path and not pkg_path:
+            logger.warning(f"No requirements.txt, pyproject.toml, or setup.py found in {repo_url}")
             return Node(
                 node_id=str(uuid.uuid4()),
                 run_id=run.run_id,
@@ -166,22 +199,11 @@ def reproduce(run: Run, sandbox: SandboxManager) -> Node:
                 checkpoint_id=sandbox.checkpoint(),
                 test_command=run.target_test,
                 test_result="error",
-                test_output="No requirements.txt file found in repository. Please ensure a requirements.txt file exists in the repository root or a subfolder so dependencies can be installed.",
-                status="done",
-            )
-
-        logger.info(f"Installing dependencies from {req_path}...")
-        install_res = sandbox.run_command(f"pip install --prefer-binary --quiet -r '{req_path}'")
-        if install_res.exit_code != 0:
-            logger.warning(f"Dependency installation failed from {req_path}: {install_res.output}")
-            return Node(
-                node_id=str(uuid.uuid4()),
-                run_id=run.run_id,
-                branch_type="root",
-                checkpoint_id=sandbox.checkpoint(),
-                test_command=run.target_test,
-                test_result="error",
-                test_output=f"Dependency installation failed from {req_path}:\n{install_res.output}",
+                test_output=(
+                    "No requirements.txt, pyproject.toml, or setup.py file found in repository.\n"
+                    "Cloud sandboxes run in an isolated environment and cannot access local virtual environments.\n"
+                    "Please ensure dependencies are committed to your repository in a requirements.txt, pyproject.toml, or setup.py file."
+                ),
                 status="done",
             )
 
@@ -853,7 +875,7 @@ async def run_pipeline(
     all_nodes: list[Node] = live_nodes if live_nodes is not None else []
     run.status = "running"
 
-    root_node = reproduce(run, sandbox)
+    root_node = await asyncio.to_thread(reproduce, run, sandbox)
     all_nodes.append(root_node)
     logger.info(f"Reproduce: root node {root_node.node_id} -> test_result={root_node.test_result}")
 
