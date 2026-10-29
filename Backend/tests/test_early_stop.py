@@ -54,7 +54,6 @@ async def test_root_early_stop_makes_zero_llm_calls(case):
     assert "Reproduction Aborted" in final.confidence_report
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: early abort in run_pipeline never sets run.total_wall_time_seconds")
 @pytest.mark.parametrize("case", CASES)
 async def test_root_early_stop_records_wall_time(case):
     final, _, _ = await _run_case(case)

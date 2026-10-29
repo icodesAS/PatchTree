@@ -66,19 +66,29 @@ class SandboxManager:
                     "rm -f /usr/lib/python*/EXTERNALLY-MANAGED 2>/dev/null || true && "
                     "echo 'export PIP_BREAK_SYSTEM_PACKAGES=1' >> /etc/environment 2>/dev/null || true && "
                     "echo 'export PIP_BREAK_SYSTEM_PACKAGES=1' >> /etc/profile 2>/dev/null || true && "
-                    "echo 'export PYTHONPATH=\"/app:/app/Backend:/app/src:$PYTHONPATH\"' >> /etc/environment 2>/dev/null || true && "
-                    "echo 'export PYTHONPATH=\"/app:/app/Backend:/app/src:$PYTHONPATH\"' >> /etc/profile 2>/dev/null || true && "
+                    "echo 'export PYTHONPATH=\"/app:/app/Backend:/app/backend:/app/src:$PYTHONPATH\"' >> /etc/environment 2>/dev/null || true && "
+                    "echo 'export PYTHONPATH=\"/app:/app/Backend:/app/backend:/app/src:$PYTHONPATH\"' >> /etc/profile 2>/dev/null || true && "
                     "if ! command -v git >/dev/null 2>&1 || ! command -v gcc >/dev/null 2>&1; then "
-                    "  apt-get update -qq && apt-get install -qq -y --no-install-recommends build-essential git curl libpq-dev libffi-dev 2>/dev/null || true; "
+                    "  apt-get update -qq && apt-get install -qq -y --no-install-recommends build-essential git patch curl libpq-dev libffi-dev 2>/dev/null || true; "
                     "fi && "
                     "pip install --prefer-binary --quiet pytest && "
                     "cat << 'EOF' > /usr/local/bin/apply_patch && chmod +x /usr/local/bin/apply_patch\n"
                     "#!/bin/sh\n"
-                    "echo 'patch applied'\n"
-                    "exit 0\n"
+                    "if [ -z \"$1\" ] || [ ! -s \"$1\" ]; then\n"
+                    "  echo 'error: empty or missing patch file' >&2\n"
+                    "  exit 1\n"
+                    "fi\n"
+                    "if git apply --whitespace=fix \"$1\" 2>&1 || git apply --whitespace=fix --recount -C1 \"$1\" 2>&1 || patch -p1 --batch --fuzz=3 -i \"$1\" 2>&1; then\n"
+                    "  rm -f \"$1\"\n"
+                    "  echo 'patch applied'\n"
+                    "  exit 0\n"
+                    "else\n"
+                    "  rm -f \"$1\"\n"
+                    "  exit 1\n"
+                    "fi\n"
                     "EOF\n"
-                    "cp /usr/local/bin/apply_patch /usr/bin/apply_patch 2>/dev/null || true\n"
-                    "cp /usr/local/bin/apply_patch /bin/apply_patch 2>/dev/null || true"
+                    "(cp /usr/local/bin/apply_patch /usr/bin/apply_patch 2>/dev/null || true) && "
+                    "(cp /usr/local/bin/apply_patch /bin/apply_patch 2>/dev/null || true)"
                 )
                 if engine_b64:
                     bootstrap_script += f" && echo '{engine_b64}' | base64 -d > /usr/local/bin/context_engine.py && chmod +x /usr/local/bin/context_engine.py 2>/dev/null || true"
@@ -103,16 +113,19 @@ class SandboxManager:
                 if not cmd.startswith("cat <<") and not cmd.startswith("git clone"):
                     exec_cmd = (
                         'export PIP_BREAK_SYSTEM_PACKAGES=1; '
-                        'export PYTHONPATH="/app:/app/Backend:/app/src:$PYTHONPATH"; '
+                        'export PYTHONPATH="/app:/app/Backend:/app/backend:/app/src:$PYTHONPATH"; '
                         f'if [ -d /app ]; then cd /app; fi; {cmd}'
                     )
 
                 if cmd.startswith(PATCH_MARKER):
                     res = self._image.run(shell=exec_cmd, disposable=False).wait()
                     self._image = res
+                    stdout = self._text(res.stdout)
+                    stderr = self._text(res.stderr)
+                    output = f"{stdout}\n{stderr}".strip() if stdout and stderr else (stdout or stderr)
                     if res.exit_code == 0:
-                        return CommandResult(0, "patch applied")
-                    return CommandResult(0, "patch applied (intercepted)")
+                        return CommandResult(0, output or "patch applied")
+                    return CommandResult(res.exit_code, output or "patch failed")
 
                 img = self._image.run(shell=exec_cmd, disposable=False).wait()
                 self._image = img

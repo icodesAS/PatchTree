@@ -8,6 +8,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal
 
 from ..llm.router import call_model
@@ -118,6 +119,25 @@ def calculate_token_cost(model_name: str | None, tokens_in: int, tokens_out: int
     else:
         rate = TIER_COST_PER_TOKEN["nano"]
     return round((tokens_in + tokens_out) * rate, 6)
+
+
+def _apply_patch_in_sandbox(sandbox: SandboxManager, filename: str, patch_diff: str) -> CommandResult:
+    """Write unified diff bytes to the target sandbox, run apply_patch, and clean up temp diff files."""
+    normalized = (patch_diff or "").replace("\r\n", "\n")
+    if normalized and not normalized.endswith("\n"):
+        normalized += "\n"
+    local_root = getattr(sandbox, "root", None)
+    if local_root is not None:
+        diff_path = Path(local_root) / filename
+        diff_path.write_bytes(normalized.encode("utf-8"))
+        try:
+            return sandbox.run_command(f"apply_patch {filename}")
+        finally:
+            diff_path.unlink(missing_ok=True)
+    if not sandbox.stub:
+        b64 = base64.b64encode(normalized.encode("utf-8")).decode("ascii")
+        sandbox.run_command(f"echo '{b64}' | base64 -d > '{filename}'")
+    return sandbox.run_command(f"apply_patch {filename}")
 
 ULTRA_SYNTHESIS_SYSTEM_PROMPT = (
     "You are Nemotron Ultra, the final escalation repair architect in the PatchTree pipeline.\n"
@@ -349,7 +369,7 @@ async def ultra_synthesize_patch(
     hypothesis = "Escalated to Nemotron Ultra 550B: Analyzed all prior failed search branches and synthesized an authoritative multi-line fix."
 
     fork = sandbox.fork(parent_node.checkpoint_id)
-    apply_result = fork.run_command(f"apply_patch ultra_{node_id}.diff")
+    apply_result = _apply_patch_in_sandbox(fork, f"ultra_{node_id}.diff", patch_diff)
     logger.debug(f"Ultra escalation: patch apply exit_code={apply_result.exit_code}")
 
     if apply_result.exit_code != 0:
@@ -614,7 +634,7 @@ async def _execute_branch(
     hypothesis = f"{job}: {patch_diff[:100]}..."
 
     # Apply the patch in the forked sandbox
-    apply_result = fork.run_command(f"apply_patch {node_id}.diff")
+    apply_result = _apply_patch_in_sandbox(fork, f"{node_id}.diff", patch_diff)
     logger.debug(f"Branch {branch_index + 1}: patch apply exit_code={apply_result.exit_code}")
 
     if apply_result.exit_code != 0:
@@ -951,6 +971,9 @@ async def run_pipeline(
             f"> Search fan-out was halted early to protect against unnecessary LLM and compute costs."
         )
         run.completed_at = datetime.now(timezone.utc)
+        if run.created_at:
+            run.total_wall_time_seconds = max(0.01, round((run.completed_at - run.created_at).total_seconds(), 2))
+        run.total_cost_usd = round(sum(n.estimated_cost_usd for n in all_nodes), 6)
         logger.warning(f"Run {run.run_id} aborted early at reproduce stage: {root_node.test_result}")
         return run, all_nodes
 

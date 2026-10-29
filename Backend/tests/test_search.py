@@ -128,13 +128,11 @@ async def test_search_round_rejects_unusable_patches_on_real_git(git_repo):
     assert (git_repo / "calc.py").read_text() == BUGGY_SOURCE
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: _execute_branch runs `apply_patch <id>.diff` without ever writing patch_diff to disk")
 async def test_search_round_valid_patch_passes_on_real_git(git_repo):
     nodes, _ = await _real_round(git_repo, VALID_DIFF)
     assert [n.test_result for n in nodes] == ["pass"] * 4
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: bootstrap installs a no-op `echo 'patch applied'` apply_patch instead of `git apply`")
 def test_container_apply_patch_script_uses_git_apply():
     import inspect
     from app.sandbox import contree_client
@@ -142,7 +140,6 @@ def test_container_apply_patch_script_uses_git_apply():
     assert "git apply" in inspect.getsource(contree_client.SandboxManager.spawn)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: real-mode run_command reports exit 0 'patch applied (intercepted)' for failed patches")
 def test_failed_patch_in_container_is_not_reported_as_success():
     class FakeImage:
         uuid, stdout, stderr, exit_code = "u", b"", b"error: patch failed", 1
