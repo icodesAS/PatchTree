@@ -514,13 +514,291 @@ When deployed publicly (e.g., on Render or Vercel), PatchTree enforces multi-lay
 
 ---
 
-## Roadmap
+## Future Roadmap & Production Evolution
 
-PatchTree is architected as a modular verification engine. Planned extensions beyond the web workbench include:
+PatchTree's architecture is designed for extensibility at multiple layers: sandbox execution runtimes, context extraction pipelines, verification strategies, and developer integration surfaces. The following roadmap outlines strategic engineering investments that address fundamental challenges in autonomous software repair rather than incremental feature additions.
 
-- **IDE Extensions & MCP Server (VS Code, Cursor, Antigravity):** Expose the PatchTree verification pipeline as a Model Context Protocol (MCP) server and IDE extension, allowing developers to trigger a 4-branch Contree verification run directly from a failing test in their editor and apply the winning diff in one click.
-- **GitHub Actions CI/CD App (`patchtree-bot`):** Automatically trigger PatchTree when a pull request fails CI checks, posting the stability-verified diff and Nemotron Ultra Confidence Report directly as a PR review comment.
-- **Multi-Language Contree OCI Images:** Extend base sandbox images beyond Python (`pytest`) to support TypeScript/Node.js (`vitest` / `jest`), Go (`go test`), and Rust (`cargo test`).
+### 1. Polyglot Execution Runtimes & Tree-Sitter AST Slicing
+
+**Engineering Challenge:** Python-specific AST parsing (`context_engine.py`) and `pytest`-centric test execution currently limit PatchTree to a single ecosystem. Expanding to additional languages requires:
+
+- Language-agnostic AST traversal for call-graph resolution and stack-trace analysis
+- Unified test framework adapters that abstract over `pytest`, `jest`, `vitest`, `go test`, and `cargo test`
+- Runtime-specific dependency manifest discovery (`package.json`, `go.mod`, `Cargo.toml`)
+
+**Planned Architecture:**
+
+- **Tree-Sitter Integration:** Replace Python's native `ast` module with [Tree-Sitter](https://tree-sitter.github.io/tree-sitter/) parsers for TypeScript/JavaScript, Go, and Rust. Tree-sitter provides incremental, error-tolerant parsing with uniform query syntax across languages.
+- **Language Server Protocol (LSP) Adaptation:** Leverage LSP's `textDocument/definition`, `textDocument/references`, and `textDocument/hover` for cross-file symbol resolution in statically-typed languages (Go, Rust, TypeScript).
+- **Debug Adapter Protocol (DAP) for Stack Traces:** Standardize exception traceback extraction via DAP's `stackTrace` request, eliminating language-specific regex parsing.
+- **Multi-Runtime OCI Images:** Build language-specific Contree base images (`node:20-alpine`, `golang:1.22`, `rust:1.75`) with preinstalled test frameworks and Tree-sitter CLI tooling.
+
+**Expected Impact:** Enables PatchTree to repair TypeScript React components with `vitest` suites, Go HTTP handlers with `go test`, and Rust CLI tools with `cargo test`, using the same 6-stage verification pipeline.
+
+---
+
+### 2. Native Developer Tooling: GitHub Action & Developer CLI
+
+**Engineering Challenge:** The current Web UI + API architecture requires developers to context-switch away from their workflow (IDE, terminal, CI dashboard) to initiate verification runs. Production adoption demands zero-friction integration into existing developer surfaces.
+
+#### 2a. GitHub Action: Automated PR Repair Bot
+
+**Workflow:**
+
+```yaml
+# .github/workflows/patchtree-verify.yml
+name: PatchTree Auto-Repair
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: patchtree/github-action@v1
+        with:
+          nebius_api_key: ${{ secrets.NEBIUS_API_KEY }}
+          nebius_project_id: ${{ secrets.NEBIUS_PROJECT_ID }}
+          target_test: "pytest tests/ -x"  # Run until first failure
+          auto_comment: true              # Post review comment with diff
+          auto_apply: false                # Require maintainer approval
+```
+
+**Technical Implementation:**
+
+1. **CI Failure Interception:** GitHub Action listens for `check_suite.completed` webhooks with `conclusion: failure`. Parses test logs to extract failing test names via regex (`FAILED tests/test_checkout.py::test_volume_discount`).
+2. **Contree Sandbox Trigger:** Clones the PR branch into a fresh Nebius Contree microVM, snapshots Checkpoint A, and invokes PatchTree's FastAPI `/runs` endpoint with the PR head SHA.
+3. **PR Review Comment:** Posts a collapsible GitHub comment containing:
+   - Weighted confidence score (`85%`) with stability gauge (5/5) and adversarial resilience (2/2)
+   - Syntax-highlighted unified diff
+   - "Apply Verified Patch" button triggering a commit to the PR branch via GitHub API (`POST /repos/{owner}/{repo}/pulls/{number}/commits`)
+4. **Optional Auto-Apply:** If `auto_apply: true` and confidence ≥ 90%, commits directly to the PR branch with commit message: `[PatchTree] Auto-repair: <bug_description> (confidence: 92%)`
+
+**Expected Impact:** Transforms PatchTree from a standalone workbench into a **CI/CD augmentation layer** that reduces mean-time-to-repair (MTTR) for flaky test suites in production repositories.
+
+#### 2b. Local Developer CLI: `patchtree run`
+
+**Workflow:**
+
+```bash
+# Developer workflow: local pre-commit verification
+$ git add src/checkout.py tests/test_checkout.py
+$ patchtree run --target "pytest tests/test_checkout.py" --watch
+
+⚡ Snapshotting working directory...
+🔄 Forking 4 speculative branches on Nebius Contree...
+✓ Branch 2 (Defensive Guards) passed target test in 12s
+🧪 Running 5-fork stability forensics...
+✓ 5/5 deterministic passes (100% stable)
+🛡️ Generating adversarial boundary tests...
+✓ 2/2 adversarial tests passed
+
+📊 Confidence: 95% | Tokens: $0.008 | Time: 58s
+📄 Verified patch saved to .patchtree/checkout_repair_2024-10-30.patch
+
+Apply now? [Y/n]: y
+✓ Applied patch to src/checkout.py
+```
+
+**Technical Implementation:**
+
+- **Git Worktree Snapshotting:** Creates a temporary git worktree at `.patchtree/snapshot-<sha>`, commits staged changes, and uploads the worktree tarball to Contree.
+- **Streaming SSE Progress:** CLI opens a Server-Sent Events (SSE) connection to FastAPI's `/runs/{run_id}/stream` endpoint, rendering live node transitions in terminal UI (similar to `docker build` output).
+- **Auto-Apply Integration:** On 90%+ confidence, offers one-click `git apply .patchtree/*.patch` with automatic conflict resolution fallback to `git mergetool`.
+
+**Expected Impact:** Enables developers to verify speculative repairs **before pushing to CI**, reducing wasted CI minutes and false-positive PR review cycles.
+
+---
+
+### 3. Self-Improving Synthetic RL Data Engine (DPO/PPO Pipeline)
+
+**Engineering Challenge:** LLMs generate patches through next-token prediction trained on public code corpora, which lacks **empirically grounded execution feedback**. Standard supervised fine-tuning (SFT) on synthetic bug-fix pairs cannot capture the multi-objective constraints of real production repair:
+
+- Patch must pass the target test (primary objective)
+- Patch must not introduce regressions (full-suite constraint)
+- Patch must survive adversarial boundary inputs (robustness constraint)
+- Patch must not modify test assertions (integrity constraint)
+
+**Planned Architecture:**
+
+#### 3a. Execution Trace Harvesting
+
+For every completed PatchTree run, serialize the full 13-node execution tree into a structured RL training sample:
+
+```json
+{
+  "repository": "owner/repo@commit_sha",
+  "bug_description": "ZeroDivisionError in empty workspace calculation",
+  "context": "<AST-extracted functions with line numbers>",
+  
+  "trajectories": [
+    {
+      "branch_id": "search_1_minimal",
+      "model": "nvidia/NVIDIA-Nemotron-3-Nano-30B",
+      "strategy_prompt": "<minimal surgical fix prompt>",
+      "generated_diff": "<unified diff output>",
+      "apply_result": "success",
+      "test_result": "passed",
+      "stability_score": 5,
+      "adversarial_score": 2,
+      "reward": 1.0  // Preferred trajectory
+    },
+    {
+      "branch_id": "search_2_alternative",
+      "model": "nvidia/nemotron-3-super-120b",
+      "strategy_prompt": "<defensive guard prompt>",
+      "generated_diff": "<unified diff with syntax error>",
+      "apply_result": "git_apply_failed",
+      "test_result": null,
+      "reward": -0.5  // Rejected trajectory (hallucinated hunk)
+    }
+  ]
+}
+```
+
+#### 3b. Direct Preference Optimization (DPO) Dataset Construction
+
+- **Positive Samples (Preferred):** Diffs that passed target test + 5/5 stability + 2/2 adversarial + optional full-suite
+- **Negative Samples (Rejected):**
+  - Syntax errors (malformed `@@` headers, unmatched braces)
+  - `git apply` failures (wrong line numbers, context mismatches)
+  - Test corruption (modified `assert` statements in `test_*.py`)
+  - Flaky patches (passed 1/5 or 2/5 stability forks)
+  - Adversarial failures (crashed on `None`, negative inputs, empty collections)
+
+Convert these trajectories into DPO preference pairs:
+
+```python
+{
+  "prompt": "<bug description + AST context + strategy instruction>",
+  "chosen": "<empirically verified diff passing 5/5 + 2/2>",
+  "rejected": "<flaky diff passing 3/5 or adversarial-failing diff>"
+}
+```
+
+#### 3c. Continuous Fine-Tuning Loop
+
+1. **Weekly Aggregation:** Batch all verified execution trajectories from production PatchTree runs (GitHub Action, CLI, Web UI) into DPO datasets.
+2. **Nemotron LoRA Adapters:** Fine-tune low-rank adaptation (LoRA) layers on Nemotron 3 Nano and Super using accumulated preference pairs, specializing models on:
+   - Correct unified diff syntax (reducing `git apply` failures by 40–60%)
+   - Boundary-aware defensive coding patterns (improving adversarial resilience)
+   - Repository-specific coding conventions (absorbed from successful patches)
+3. **A/B Model Routing:** Deploy fine-tuned LoRA checkpoints alongside base Nemotron models, routing 10% of search branches to LoRA variants for live performance comparison.
+
+**Expected Impact:** Transforms PatchTree from a static inference pipeline into a **self-improving verification engine** where every successful repair strengthens future model behavior. Analogous to how AlphaGo's self-play created superhuman gameplay data, PatchTree's execution tree becomes a **flywheel for autonomous code repair**.
+
+---
+
+### 4. Deterministic Mutation Testing & State Fuzzing
+
+**Engineering Challenge:** LLM-generated adversarial tests (`generate_adversarial_test`) are limited by the model's ability to imagine edge cases. They cannot systematically explore the **mutation-equivalence space**: does this patch genuinely fix the bug, or does it merely pass the existing test suite while remaining vulnerable to logically equivalent perturbations?
+
+**Planned Architecture:**
+
+#### 4a. Automated Mutation Injection
+
+After a candidate patch passes 5/5 stability forks, inject **semantic mutations** into the patched code and re-run the target test:
+
+| Mutation Class | Example Transformation | Expected Test Behavior |
+|---|---|---|
+| **Boundary Shift** | `if count >= 10:` → `if count > 10:` | Test should **fail** (mutation not equivalent) |
+| **Boolean Inversion** | `if is_valid:` → `if not is_valid:` | Test should **fail** |
+| **Arithmetic Operator** | `total * discount` → `total / discount` | Test should **fail** |
+| **Return Value** | `return True` → `return False` | Test should **fail** |
+| **Exception Swallow** | `raise ValueError()` → `pass` | Test should **fail** |
+
+**Mutation Kill Score Calculation:**
+
+```python
+mutation_kill_score = (mutations_detected / total_mutations_injected) * 100
+
+# Example: 18 out of 20 mutations caused test failures
+# → 90% mutation kill score → test suite has strong coverage
+```
+
+If the mutation kill score drops below 70%, it indicates the test suite has **insufficient assertion density** to validate the patch's correctness, even if the patch passes 5/5 stability forks.
+
+#### 4b. State Fuzzing for Stateful Systems
+
+For patches affecting database queries, API state transitions, or file I/O:
+
+1. **Property-Based Testing Integration:** Generate adversarial inputs via [Hypothesis](https://hypothesis.readthedocs.io/) (Python) or [quickcheck](https://crates.io/crates/quickcheck) (Rust), feeding randomized boundary values (`NaN`, `Infinity`, `U+0000`, `2^63-1`) into patched functions.
+2. **Symbolic Execution Lite:** Use lightweight constraint solvers (Z3 via `z3-solver` Python bindings) to extract path conditions from patched control flow and synthesize inputs that maximally explore branch coverage.
+
+**Expected Impact:** Elevates PatchTree's adversarial verification from **model imagination** (limited by training data) to **mathematical proof** (systematic mutation coverage), reducing false confidence in brittle patches.
+
+---
+
+### 5. Distributed Multi-Container & Microservice Sandboxing
+
+**Engineering Challenge:** Modern production defects often manifest at **service boundaries** rather than in isolated functions:
+
+- An API handler passes unit tests but fails integration tests due to incorrect database schema assumptions
+- A Redis cache invalidation bug only appears when multiple services race to update shared state
+- A Kafka consumer crashes on malformed JSON payloads that the producer emits under rare load conditions
+
+Current single-container Contree sandboxes cannot reproduce these distributed failure modes.
+
+**Planned Architecture:**
+
+#### 5a. Docker Compose Topology Forking
+
+Extend Contree's copy-on-write checkpointing to multi-container stacks:
+
+```yaml
+# .patchtree/docker-compose.yml (auto-detected in repository root)
+services:
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgres://db:5432/testdb
+      REDIS_URL: redis://cache:6379
+  
+  db:
+    image: postgres:15-alpine
+    volumes:
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+  
+  cache:
+    image: redis:7-alpine
+```
+
+**Checkpoint A Snapshot Process:**
+
+1. Spawn all services in a Contree network namespace
+2. Wait for health checks (`curl http://api:8000/health`)
+3. Seed database with test fixtures (`psql < seed.sql`)
+4. Snapshot **all three container filesystems** atomically via `checkpoint_group([api_image, db_image, cache_image])`
+5. Fork 4 search branches, each inheriting the full multi-container topology
+
+**Diff Application:** When a candidate patch modifies `api/src/handlers.py`, PatchTree applies the diff **only to the API container** while forking the DB and Redis containers unmodified.
+
+#### 5b. Contract Verification Across Service Boundaries
+
+For microservice patches affecting API contracts (e.g., changing a REST response schema or Kafka message format):
+
+1. **OpenAPI / Protobuf Drift Detection:** Compare the patched API's generated OpenAPI spec (`/openapi.json`) or Protocol Buffer descriptors against the pre-patch version. Flag breaking changes (removed fields, type coercions).
+2. **Consumer-Driven Contract Testing:** If the repository includes Pact contracts (`tests/pacts/consumer-api.json`), re-run contract verification tests against the patched provider service.
+3. **Cross-Service Integration Tests:** If `full_suite_test` includes integration tests that spawn multiple services (`pytest tests/integration/`), execute them in the forked multi-container topology.
+
+**Expected Impact:** Extends PatchTree's verification guarantees from **function-level correctness** (current scope) to **system-level correctness** (distributed state consistency, API contract compliance), enabling use in microservice-heavy production environments.
+
+---
+
+## Summary: From Workbench to Production Infrastructure
+
+These five strategic investments transform PatchTree from a **hackathon proof-of-concept** into a **production-grade autonomous repair infrastructure**:
+
+| Capability | Current State (v1.0) | Future State |
+|---|---|---|
+| **Language Support** | Python + pytest | Python, TypeScript, Go, Rust (via Tree-sitter) |
+| **Developer Integration** | Web UI + REST API | GitHub Action, CLI, IDE extensions, MCP server |
+| **Model Training Loop** | Static Nemotron inference | Self-improving DPO/PPO flywheel from verified execution traces |
+| **Adversarial Verification** | LLM-generated boundary tests | Mutation testing + symbolic execution + property-based fuzzing |
+| **Execution Topology** | Single-container Python sandboxes | Multi-container microservice stacks with contract verification |
+
+The roadmap prioritizes **systemic correctness** (mutation kill scores, cross-service contracts) over **operational velocity** (faster LLM calls, cheaper tokens), reflecting PatchTree's positioning as a **safety-critical verification layer** rather than a convenience tool.
 
 ---
 
