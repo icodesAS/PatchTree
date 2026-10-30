@@ -20,6 +20,7 @@ import NewRunModal from './components/NewRunModal';
 import ReportModal from './components/ReportModal';
 import NodeInspector from './components/NodeInspector';
 import HistorySidebar from './components/HistorySidebar';
+import SettingsModal from './components/SettingsModal';
 import PNode from './components/PNode';
 import ParticleEdge from './components/ParticleEdge';
 import Launchpad from './components/Launchpad';
@@ -163,6 +164,7 @@ export default function App() {
   const [showNewRun, setShowNewRun] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [paletteIndex, setPaletteIndex] = useState(0);
@@ -544,6 +546,7 @@ export default function App() {
   const paletteActions: PaletteAction[] = [
     { id: 'new-run', label: 'New run', shortcut: 'N' },
     { id: 'history', label: 'Open history' },
+    { id: 'settings', label: 'Open settings', shortcut: ',' },
     { id: 'demo-run', label: 'Open demo run (example/pricing-service)' },
     ...PRESETS.map((p) => ({ id: 'preset-' + p.id, label: 'Load example: ' + p.title })),
   ];
@@ -554,6 +557,7 @@ export default function App() {
       setInitialModalValues({});
       setShowNewRun(true);
     } else if (id === 'history') setShowHistory(true);
+    else if (id === 'settings') setShowSettings(true);
     else if (id === 'demo-run') loadMock();
     else {
       const preset = PRESETS.find((p) => 'preset-' + p.id === id);
@@ -601,23 +605,34 @@ export default function App() {
           setShowHistory(false);
           return;
         }
+        if (showSettings) {
+          setShowSettings(false);
+          return;
+        }
         if (selectedId) {
           setSelectedId(null);
           return;
         }
       }
 
-      if (!isInput && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'n') {
-        if (!showNewRun && !showPalette) {
-          e.preventDefault();
-          setInitialModalValues({});
-          setShowNewRun(true);
+      if (!isInput && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.key.toLowerCase() === 'n') {
+          if (!showNewRun && !showPalette && !showSettings) {
+            e.preventDefault();
+            setInitialModalValues({});
+            setShowNewRun(true);
+          }
+        } else if (e.key === ',') {
+          if (!showSettings && !showPalette && !showNewRun) {
+            e.preventDefault();
+            setShowSettings(true);
+          }
         }
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [showPalette, showNewRun, showReport, showHistory, selectedId]);
+  }, [showPalette, showNewRun, showReport, showHistory, showSettings, selectedId]);
 
   const isHome = !run && !loading && patchNodes.length === 0;
 
@@ -683,10 +698,10 @@ export default function App() {
           <div className="left-rail__bottom">
             <button
               type="button"
-              className="rail-btn"
-              disabled
-              aria-label="Settings"
-              title="Settings"
+              className={`rail-btn ${showSettings ? 'is-active' : ''}`}
+              onClick={() => setShowSettings(true)}
+              aria-label="Settings (,)"
+              title="Settings (,)"
             >
               <Settings size={16} strokeWidth={1.5} />
             </button>
@@ -870,6 +885,14 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+      {showSettings && (
+        <SettingsModal
+          isOpen={showSettings}
+          onClose={() => setShowSettings(false)}
+          backendOnline={backendOnline}
+          onPingBackend={pingBackend}
+        />
       )}
     </div>
   );
