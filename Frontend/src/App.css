@@ -316,6 +316,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 12px;
+  overflow: hidden;
 }
 
 .topbar__brand {
@@ -328,6 +329,7 @@ kbd {
   padding: 4px 0;
   cursor: pointer;
   font-family: inherit;
+  flex-shrink: 0;
 }
 
 .topbar__logo {
@@ -353,6 +355,7 @@ kbd {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex-shrink: 1;
 }
 
 .topbar__crumb-repo {
@@ -367,7 +370,8 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 220px;
+  max-width: 170px;
+  flex-shrink: 0;
   transition:
     background-color var(--t-fast) var(--ease),
     color var(--t-fast) var(--ease);
@@ -401,16 +405,21 @@ kbd {
   font-size: 12px;
   color: var(--text-3);
   white-space: nowrap;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar__spacer {
   flex: 1;
+  min-width: 8px;
 }
 
 .topbar__summary {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
 }
 
 .topbar__status {
@@ -435,6 +444,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 /* Phase Bar (Section 8.2) */
@@ -1963,6 +1973,19 @@ kbd {
 }
 
 /* ── Responsive Rules (Section 5.2, 8.1, 9.1, 14) ────────────────────────── */
+@media (max-width: 1380px) {
+  .topbar__metric-extra {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1220px) {
+  .topbar__crumb-id,
+  .topbar__crumb-sep {
+    display: none !important;
+  }
+}
+
 @media (max-width: 1100px) {
   .home-workspace__grid {
     grid-template-columns: 1fr;

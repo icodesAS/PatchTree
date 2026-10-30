@@ -1,6 +1,22 @@
 import type { PatchNode, Run, RunCreate } from './types';
 
-const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+const isVercel =
+  typeof window !== 'undefined' &&
+  (window.location.hostname.endsWith('vercel.app') ||
+    (window.location.protocol.startsWith('http') &&
+      !['localhost', '127.0.0.1'].includes(window.location.hostname) &&
+      !import.meta.env.DEV));
+
+export const BASE = isVercel
+  ? '/api'
+  : (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '');
+
+export function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined' && BASE.startsWith('/')) {
+    return `${window.location.origin}${BASE}`;
+  }
+  return BASE;
+}
 
 export class HttpError extends Error {
   status: number;

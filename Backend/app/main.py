@@ -70,10 +70,12 @@ def _is_trusted_origin(candidate: str) -> bool:
     clean = (candidate or "").strip().rstrip("/")
     if not clean:
         return False
+    if not clean.startswith("http://") and not clean.startswith("https://"):
+        clean = f"https://{clean}"
     for allowed in DEFAULT_PROD_ORIGINS + ([o for o in origins if o != "*"]):
         if clean == allowed or clean.startswith(f"{allowed}/"):
             return True
-    host_match = re.match(r"^(https://[^/]+)", clean)
+    host_match = re.match(r"^(https?://[^/]+)", clean)
     if host_match and VERCEL_ORIGIN_RE.match(host_match.group(1)):
         return True
     return False
@@ -84,7 +86,11 @@ def _verify_frontend_request(http_request: Request) -> None:
     if not is_prod:
         return
     client_header = http_request.headers.get("x-patchtree-client", "")
-    origin = http_request.headers.get("origin", "") or http_request.headers.get("referer", "")
+    origin = (
+        http_request.headers.get("origin", "")
+        or http_request.headers.get("referer", "")
+        or http_request.headers.get("x-forwarded-host", "")
+    )
     if client_header != "patchtree-web-v1" or not _is_trusted_origin(origin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

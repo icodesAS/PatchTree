@@ -14,7 +14,7 @@ import { LayoutList, Plus, Command, Settings, Search } from 'lucide-react';
 import type { PatchNode, Run, RunCreate } from './types';
 import { mockData } from './mockData';
 import { nodeNames } from './nodeNames';
-import { checkHealth, createRun, getRun, getTree, pollUntilComplete, HttpError } from './api';
+import { checkHealth, createRun, getRun, getTree, pollUntilComplete, HttpError, getApiBaseUrl } from './api';
 import { computeLayout, resetLayoutCache, NODE_W, NODE_H } from './layout';
 import NewRunModal from './components/NewRunModal';
 import ReportModal from './components/ReportModal';
@@ -713,7 +713,7 @@ export default function App() {
             <div className="offline-banner" role="alert">
               <span>
                 Could not reach the backend at{' '}
-                <code>{import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}</code>. Check
+                <code>{getApiBaseUrl()}</code>. Check
                 that it is running and try again.
               </span>
               <button type="button" className="btn btn--secondary btn--xs" onClick={pingBackend}>

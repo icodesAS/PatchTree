@@ -76,6 +76,12 @@ function RepoBreadcrumb({ repoUrl, runId }: { repoUrl?: string | null; runId?: s
     }
   };
 
+  const displayId = runId
+    ? runId.length > 10
+      ? `${runId.slice(0, 8)}…`
+      : runId
+    : '';
+
   return (
     <div className="topbar__crumb-wrap">
       <span className="topbar__divider" aria-hidden="true" />
@@ -91,7 +97,7 @@ function RepoBreadcrumb({ repoUrl, runId }: { repoUrl?: string | null; runId?: s
       {runId && (
         <>
           <ChevronRight size={12} className="topbar__crumb-sep" />
-          <span className="topbar__crumb-id mono">{runId}</span>
+          <span className="topbar__crumb-id mono" title={runId}>{displayId}</span>
         </>
       )}
     </div>
@@ -231,9 +237,9 @@ export default function TopBar({
 
             {conf != null && (
               <>
-                <span className="topbar__divider" aria-hidden="true" />
+                <span className="topbar__divider topbar__metric-extra" aria-hidden="true" />
                 <span
-                  className="topbar__metric num"
+                  className="topbar__metric topbar__metric-extra num"
                   title="Share of repeat runs that passed for the winning patch"
                 >
                   {conf}% stable

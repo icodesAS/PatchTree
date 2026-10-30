@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api",
+      "destination": "https://patchtree.onrender.com/"
+    },
+    {
+      "source": "/api/:match*",
+      "destination": "https://patchtree.onrender.com/:match*"
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, type KeyboardEvent } from 'react';
 import { X } from 'lucide-react';
 import type { RunCreate } from '../types';
+import { getApiBaseUrl } from '../api';
 
 const EXAMPLES: { id: string; label: string; data: RunCreate }[] = [
   {
@@ -150,7 +151,7 @@ export default function NewRunModal({ onSubmit, onClose, backendOnline, initialV
 
         {!backendOnline && (
           <div className="modal__offline-banner">
-            Could not reach the backend at <code>{import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}</code>. Check that it is running and try again.
+            Could not reach the backend at <code>{getApiBaseUrl()}</code>. Check that it is running and try again.
           </div>
         )}
 
