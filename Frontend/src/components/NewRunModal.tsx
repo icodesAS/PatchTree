@@ -1,19 +1,22 @@
-import { useState } from 'react';
-import { X, Zap, ChevronRight } from 'lucide-react';
+import { useState, useEffect, useRef, type KeyboardEvent } from 'react';
+import { X } from 'lucide-react';
 import type { RunCreate } from '../types';
 
-const SAMPLES: { label: string; data: RunCreate }[] = [
+const EXAMPLES: { id: string; label: string; data: RunCreate }[] = [
   {
-    label: '🛒 Checkout Pricing Suite (Live GitHub Bug)',
+    id: 'checkout',
+    label: 'Checkout pricing suite',
     data: {
       repo_url: 'https://github.com/noshaeec/checkout-pricing-suite',
-      bug_description: 'volume_discount_rate() in src/checkout/pricing.py uses > TIER_2_THRESHOLD instead of >= TIER_2_THRESHOLD so subtotal 1000.00 gets 10% instead of 15%',
+      bug_description:
+        'volume_discount_rate() in src/checkout/pricing.py uses > TIER_2_THRESHOLD instead of >= TIER_2_THRESHOLD so subtotal 1000.00 gets 10% instead of 15%',
       target_test: 'pytest --runxfail tests/test_discounts.py',
       full_suite_test: 'pytest --runxfail tests/test_discounts.py tests/test_items.py',
     },
   },
   {
-    label: '🐛 Math Service (ZeroDivisionError)',
+    id: 'math',
+    label: 'Math service (ZeroDivisionError)',
     data: {
       repo_url: 'https://github.com/example/math-service',
       bug_description: 'compute_average() crashes on empty list with ZeroDivisionError',
@@ -22,7 +25,8 @@ const SAMPLES: { label: string; data: RunCreate }[] = [
     },
   },
   {
-    label: '🔢 Pricing Calculator (Discount Off-By-One)',
+    id: 'pricing',
+    label: 'Pricing calculator (discount off by one)',
     data: {
       repo_url: 'https://github.com/example/pricing-service',
       bug_description: 'calculate_discount() returns negative value when discount_pct > 100',
@@ -39,25 +43,12 @@ interface Props {
   initialValues?: Partial<RunCreate>;
 }
 
-function validateRepoUrl(raw: string): { normalized: string; error: string | null } {
+function normalizeAndValidateRepo(raw: string): { normalized: string; valid: boolean } {
   const trimmed = raw.trim();
-  if (!trimmed) return { normalized: '', error: null };
-  if (/\s/.test(trimmed)) {
-    return {
-      normalized: trimmed,
-      error: 'Enter a Git repository URL without spaces or commands (e.g. https://github.com/owner/repo).',
-    };
-  }
-  const normalized = /^(github\.com|gitlab\.com|bitbucket\.org)\//i.test(trimmed)
-    ? `https://${trimmed}`
-    : trimmed;
-  const isGitUrl = /^(https?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+|git@[^\s:]+:[^\s/]+\/[^\s/]+|ssh:\/\/[^\s/]+\/.+)/i.test(
-    normalized,
-  );
-  return {
-    normalized,
-    error: isGitUrl ? null : 'Must be a valid Git repository URL (e.g. https://github.com/owner/repo).',
-  };
+  if (!trimmed) return { normalized: '', valid: false };
+  const normalized = /^github\.com\//i.test(trimmed) ? `https://${trimmed}` : trimmed;
+  const isGithub = /^https?:\/\/(www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/i.test(normalized);
+  return { normalized, valid: isGithub };
 }
 
 export default function NewRunModal({ onSubmit, onClose, backendOnline, initialValues }: Props) {
@@ -68,119 +59,231 @@ export default function NewRunModal({ onSubmit, onClose, backendOnline, initialV
     full_suite_test: initialValues?.full_suite_test || '',
   });
 
+  const [selectedExample, setSelectedExample] = useState<string>('');
+  const [touched, setTouched] = useState<{ repo: boolean; bug: boolean; test: boolean }>({
+    repo: false,
+    bug: false,
+    test: false,
+  });
+
+  const repoRef = useRef<HTMLInputElement>(null);
+  const bugRef = useRef<HTMLTextAreaElement>(null);
+  const testRef = useRef<HTMLInputElement>(null);
+  const suiteRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!form.repo_url.trim()) {
+      repoRef.current?.focus();
+    } else if (!form.bug_description.trim()) {
+      bugRef.current?.focus();
+    } else if (!form.target_test.trim()) {
+      testRef.current?.focus();
+    } else {
+      repoRef.current?.focus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const set = (k: keyof RunCreate, v: string) => setForm((f) => ({ ...f, [k]: v }));
-  const repoCheck = validateRepoUrl(form.repo_url);
-  const valid = Boolean(
-    repoCheck.normalized && !repoCheck.error && form.bug_description.trim() && form.target_test.trim(),
-  );
+
+  const repoCheck = normalizeAndValidateRepo(form.repo_url);
+  const repoError = touched.repo && !repoCheck.valid
+    ? 'Enter a GitHub URL like https://github.com/owner/repo.'
+    : null;
+  const bugError = touched.bug && !form.bug_description.trim()
+    ? 'Add a short description so the models know what to fix.'
+    : null;
+  const testError = touched.test && !form.target_test.trim()
+    ? 'Add the command that fails.'
+    : null;
+
+  const isValid =
+    repoCheck.valid &&
+    Boolean(form.bug_description.trim()) &&
+    Boolean(form.target_test.trim());
+
+  const handleSubmit = () => {
+    setTouched({ repo: true, bug: true, test: true });
+    if (!isValid || !backendOnline) return;
+    onSubmit({
+      repo_url: repoCheck.normalized,
+      bug_description: form.bug_description.trim(),
+      target_test: form.target_test.trim(),
+      full_suite_test: (form.full_suite_test ?? '').trim(),
+    });
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay" onClick={onClose} onKeyDown={handleKeyDown}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-run-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal__header">
-          <div className="modal__title-wrap">
-            <Zap size={18} className="modal__icon" />
-            <h2 className="modal__title">New PatchTree Run</h2>
-          </div>
-          <button className="inspector__close" onClick={onClose}><X size={16} /></button>
+          <h2 id="new-run-modal-title" className="modal__title">
+            New run
+          </h2>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon"
+            onClick={onClose}
+            aria-label="Close modal"
+          >
+            <X size={16} strokeWidth={1.5} />
+          </button>
         </div>
 
         {!backendOnline && (
           <div className="modal__offline-banner">
-            🔴 Backend offline at <code>{import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}</code>. Start FastAPI server before dispatching runs.
+            Could not reach the backend at <code>{import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}</code>. Check that it is running and try again.
           </div>
         )}
 
         <div className="modal__body">
-          <label className="field">
-            <span className="field__label">Repository URL</span>
+          <div className="field">
+            <label htmlFor="example-select" className="field__label">
+              Load an example
+            </label>
+            <select
+              id="example-select"
+              className="field__select"
+              value={selectedExample}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedExample(val);
+                const found = EXAMPLES.find((ex) => ex.id === val);
+                if (found) {
+                  setForm(found.data);
+                  setTouched({ repo: false, bug: false, test: false });
+                }
+              }}
+            >
+              <option value="">Select an example...</option>
+              {EXAMPLES.map((ex) => (
+                <option key={ex.id} value={ex.id}>
+                  {ex.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label htmlFor="field-repo" className="field__label">
+              Repository
+            </label>
             <input
-              className="field__input"
+              ref={repoRef}
+              id="field-repo"
+              className={`field__input ${repoError ? 'is-error' : ''}`}
               type="text"
               placeholder="https://github.com/owner/repo"
               value={form.repo_url}
               onChange={(e) => set('repo_url', e.target.value)}
+              onBlur={() => setTouched((t) => ({ ...t, repo: true }))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
+                  e.preventDefault();
+                  bugRef.current?.focus();
+                }
+              }}
             />
-            {repoCheck.error && (
-              <span style={{ color: '#f87171', fontSize: '0.76rem', marginTop: 4, display: 'block' }}>
-                {repoCheck.error}
-              </span>
-            )}
-          </label>
+            {repoError && <span className="field__error">{repoError}</span>}
+          </div>
 
-          <label className="field">
-            <span className="field__label">Bug Description</span>
+          <div className="field">
+            <label htmlFor="field-bug" className="field__label">
+              What is going wrong?
+            </label>
             <textarea
-              className="field__input field__textarea"
-              placeholder="Describe the bug and its symptoms…"
+              ref={bugRef}
+              id="field-bug"
+              className={`field__input field__textarea ${bugError ? 'is-error' : ''}`}
+              placeholder="Describe the bug and what you see when it happens."
               value={form.bug_description}
               onChange={(e) => set('bug_description', e.target.value)}
+              onBlur={() => setTouched((t) => ({ ...t, bug: true }))}
               rows={3}
             />
-          </label>
+            {bugError && <span className="field__error">{bugError}</span>}
+          </div>
 
-          <label className="field">
-            <span className="field__label">Target Test Command</span>
+          <div className="field">
+            <div className="field__label-row">
+              <label htmlFor="field-test" className="field__label">
+                Failing test command
+              </label>
+              <span className="field__hint">Runs first, to confirm the bug.</span>
+            </div>
             <input
-              className="field__input"
+              ref={testRef}
+              id="field-test"
+              className={`field__input mono ${testError ? 'is-error' : ''}`}
               type="text"
               placeholder="pytest tests/test_bug.py::test_function"
               value={form.target_test}
               onChange={(e) => set('target_test', e.target.value)}
+              onBlur={() => setTouched((t) => ({ ...t, test: true }))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
+                  e.preventDefault();
+                  suiteRef.current?.focus();
+                }
+              }}
             />
-          </label>
+            {testError && <span className="field__error">{testError}</span>}
+          </div>
 
-          <label className="field">
-            <span className="field__label">Full Suite Command <span className="field__optional">(optional)</span></span>
+          <div className="field">
+            <div className="field__label-row">
+              <label htmlFor="field-suite" className="field__label">
+                Full test suite (optional)
+              </label>
+              <span className="field__hint">Leave empty to skip the regression check.</span>
+            </div>
             <input
-              className="field__input"
+              ref={suiteRef}
+              id="field-suite"
+              className="field__input mono"
               type="text"
-              placeholder="e.g. pytest, npm test (leave empty to skip)"
+              placeholder="pytest"
               value={form.full_suite_test ?? ''}
               onChange={(e) => set('full_suite_test', e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
             />
-          </label>
-
-          {/* Hackathon Demo Scenarios for Judges */}
-          <div className="modal__demo-section">
-            <div className="modal__demo-header">
-              <span className="modal__demo-title">💡 Hackathon Demo Templates (Quick-Fill Form)</span>
-              <span className="modal__demo-sub">
-                Click a sample scenario below to automatically populate the fields above for evaluation:
-              </span>
-            </div>
-            <div className="modal__demo-chips">
-              {SAMPLES.map((s) => (
-                <button
-                  key={s.label}
-                  type="button"
-                  className="modal__demo-chip"
-                  onClick={() => setForm(s.data)}
-                  title="Populate form with this benchmark scenario"
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
 
         <div className="modal__footer">
-          <button className="btn btn--secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn--ghost" onClick={onClose}>
+            Cancel
+          </button>
           <button
+            type="button"
             className="btn btn--primary"
-            disabled={!valid || !backendOnline}
-            onClick={() =>
-              onSubmit({
-                ...form,
-                repo_url: repoCheck.normalized,
-                bug_description: form.bug_description.trim(),
-                target_test: form.target_test.trim(),
-                full_suite_test: (form.full_suite_test ?? '').trim(),
-              })
-            }
+            disabled={!isValid || !backendOnline}
+            onClick={handleSubmit}
           >
-            <ChevronRight size={15} /> Start Search &amp; Verification
+            Start run
           </button>
         </div>
       </div>

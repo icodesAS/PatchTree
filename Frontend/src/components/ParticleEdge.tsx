@@ -17,21 +17,14 @@ export default function ParticleEdge({
     targetY,
     sourcePosition,
     targetPosition,
-    borderRadius: 16,
+    borderRadius: 8,
   });
 
   const state = (data?.state as string) || 'idle';
-  const live = state === 'running' || state === 'winner';
 
   return (
-    <g className={`react-flow__edge is-${state}`}>
+    <g className={`pt-edge pt-edge--${state}`}>
       <BaseEdge id={id} path={path} />
-      {live &&
-        [0, 0.45, 0.9].map((delay) => (
-          <circle key={delay} r="2.6" className="pt-particle">
-            <animateMotion dur="1.4s" begin={`${delay}s`} repeatCount="indefinite" path={path} />
-          </circle>
-        ))}
     </g>
   );
 }

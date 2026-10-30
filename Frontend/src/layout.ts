@@ -1,53 +1,30 @@
-import dagre from 'dagre';
-import type { PatchNode } from './types';
+import type { BranchType, PatchNode } from './types';
 
-export const NODE_W = 280;
-export const NODE_H = 135;
+export const NODE_W = 232;
+export const NODE_H = 72;
+const GAP_X = 16;
+const GAP_Y = 48;
 
-// Coordinate cache so existing nodes don't jump on incremental updates
-const layoutCache = new Map<string, { x: number; y: number }>();
+// One row per phase, top to bottom (spec 7.2): siblings 16px apart, phases 48px apart.
+const ROW_ORDER: BranchType[] = ['root', 'search', 'stability', 'adversarial', 'full_suite'];
 
 export function resetLayoutCache() {
-  layoutCache.clear();
+  /* layout is stateless; kept for call-site compatibility */
 }
 
 export function computeLayout(nodes: PatchNode[]): Map<string, { x: number; y: number }> {
-  if (nodes.length === 0) {
-    layoutCache.clear();
-    return new Map();
-  }
-
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({
-    rankdir: 'TB',
-    ranksep: 80,
-    nodesep: 36,
-    marginx: 50,
-    marginy: 50,
-  });
-  g.setDefaultEdgeLabel(() => ({}));
-
-  for (const n of nodes) {
-    g.setNode(n.node_id, { width: NODE_W, height: NODE_H });
-  }
-  for (const n of nodes) {
-    if (n.parent_node_id) {
-      g.setEdge(n.parent_node_id, n.node_id);
-    }
-  }
-
-  dagre.layout(g);
-
   const pos = new Map<string, { x: number; y: number }>();
-  for (const n of nodes) {
-    const nodeInfo = g.node(n.node_id);
-    if (nodeInfo) {
-      const targetX = Math.round(nodeInfo.x - NODE_W / 2);
-      const targetY = Math.round(nodeInfo.y - NODE_H / 2);
-      pos.set(n.node_id, { x: targetX, y: targetY });
-      layoutCache.set(n.node_id, { x: targetX, y: targetY });
-    }
-  }
+  const present = ROW_ORDER.filter((t) => nodes.some((n) => n.branch_type === t));
 
+  present.forEach((type, row) => {
+    const rowNodes = nodes.filter((n) => n.branch_type === type);
+    const width = rowNodes.length * NODE_W + (rowNodes.length - 1) * GAP_X;
+    rowNodes.forEach((n, i) => {
+      pos.set(n.node_id, {
+        x: Math.round(-width / 2 + i * (NODE_W + GAP_X)),
+        y: row * (NODE_H + GAP_Y),
+      });
+    });
+  });
   return pos;
 }

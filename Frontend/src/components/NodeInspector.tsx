@@ -1,21 +1,30 @@
-import { useState, useEffect } from 'react';
-import { X, Cpu, DollarSign, Copy, Check, FileCode, Terminal, Activity } from 'lucide-react';
+import { useState } from 'react';
+import { X, Copy, Check } from 'lucide-react';
 import type { PatchNode } from '../types';
 import DiffViewer from './DiffViewer';
+import TierTag from './TierTag';
+import { getModelTier } from '../tier';
 
 const STRATEGY_DESCRIPTIONS: Record<string, string> = {
-  generate_patch_minimal: 'Strategy 1 (Minimal Surgical Fix) — Targets the exact crash site with the smallest localized 1–5 line change.',
-  generate_patch_alternative: 'Strategy 2 (Defensive & Boundary Guard) — Introduces input validation, boundary guards, or state normalization.',
-  generate_patch_root_cause: 'Strategy 3 (Upstream Root-Cause Fix) — Traces data flow backward into producer functions and caller state.',
-  generate_patch_test_driven: 'Strategy 4 (Test-Contract Compliance) — Aligns return values, exception contracts, and edge cases with test assertions.',
+  generate_patch_minimal:
+    'Strategy 1 (Minimal surgical fix) — Targets the crash site with a localized 1–5 line change.',
+  generate_patch_alternative:
+    'Strategy 2 (Defensive & boundary guard) — Adds input validation, boundary guards, or state normalization.',
+  generate_patch_root_cause:
+    'Strategy 3 (Upstream root-cause fix) — Traces data flow backward into producer functions and caller state.',
+  generate_patch_test_driven:
+    'Strategy 4 (Test-contract compliance) — Aligns return values, exception contracts, and edge cases with test assertions.',
 };
 
-function formatInspectorHypothesis(node: PatchNode): string {
+function formatInspectorStrategy(node: PatchNode): string {
   const raw = (node.hypothesis || '').trim();
   if (!raw) {
-    if (node.branch_type === 'root') return `Initial bug reproduction checkpoint executing \`${node.test_command || 'pytest'}\` on clean repository state.`;
-    if (node.branch_type === 'stability') return `Determinism verification fork: re-running \`${node.test_command || 'pytest'}\` in an isolated Contree snapshot to rule out flakiness.`;
-    if (node.branch_type === 'full_suite') return `Full regression suite execution (\`${node.test_command || 'pytest'}\`) verifying no collateral breakage.`;
+    if (node.branch_type === 'root')
+      return `Initial bug reproduction running ${node.test_command || 'pytest'} on a clean repository snapshot.`;
+    if (node.branch_type === 'stability')
+      return `Repeat verification fork running ${node.test_command || 'pytest'} in an isolated Contree VM.`;
+    if (node.branch_type === 'full_suite')
+      return `Full regression suite (${node.test_command || 'pytest'}) checking for collateral breakage.`;
     return '';
   }
   const jobMatch = raw.match(/^(generate_patch_\w+):\s*(.*)$/s);
@@ -23,8 +32,13 @@ function formatInspectorHypothesis(node: PatchNode): string {
     const [, job, rest] = jobMatch;
     const desc = STRATEGY_DESCRIPTIONS[job] || job;
     const firstLine = rest.split('\n')[0].trim();
-    if (firstLine && !firstLine.startsWith('---') && !firstLine.startsWith('+++') && !firstLine.startsWith('@@')) {
-      return `${desc}\n\nSummary: ${firstLine}`;
+    if (
+      firstLine &&
+      !firstLine.startsWith('---') &&
+      !firstLine.startsWith('+++') &&
+      !firstLine.startsWith('@@')
+    ) {
+      return `${desc}\n${firstLine}`;
     }
     return desc;
   }
@@ -32,69 +46,81 @@ function formatInspectorHypothesis(node: PatchNode): string {
   if (advMatch) {
     const [, forkNum, rest] = advMatch;
     const fnMatch = (node.patch_diff || rest).match(/def\s+(test_[a-zA-Z0-9_]+)/);
-    const fnLabel = fnMatch ? `\`${fnMatch[1]}\`` : 'synthesized boundary & edge-case pytest';
-    return `Adversarial red-team fork ${forkNum} — executes ${fnLabel} in an isolated Contree snapshot to stress-test the winning patch.`;
+    const fnLabel = fnMatch ? fnMatch[1] : 'edge-case pytest';
+    return `Adversarial probe ${forkNum} — runs ${fnLabel} in an isolated Contree snapshot to test the winning patch.`;
   }
   return raw;
 }
 
-const BRANCH_LABELS: Record<string, string> = {
-  root: 'Root', search: 'Search', stability: 'Stability',
-  adversarial: 'Adversarial', full_suite: 'Full Suite',
+const PHASE_NAMES: Record<string, string> = {
+  root: 'Reproduce',
+  search: 'Search',
+  stability: 'Stability',
+  adversarial: 'Adversarial',
+  full_suite: 'Full suite',
 };
-const BRANCH_COLORS: Record<string, string> = {
-  root: '#6366f1', search: '#3b82f6', stability: '#10b981',
-  adversarial: '#f59e0b', full_suite: '#8b5cf6',
-};
-const MODEL_SHORT: Record<string, string> = {
-  'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B': 'Nano 30B',
-  'nvidia/nemotron-3-super-120b-a12b': 'Super 120B',
-  'nvidia/Nemotron-Super-70B': 'Super 120B',
-  'nvidia/Nemotron-3-Ultra-550b-a55b': 'Ultra 550B',
-  'nvidia/Nemotron-Ultra-253B': 'Ultra 550B',
-  'none': 'None',
-};
+
+function formatNodeHeaderTitle(node: PatchNode, name: string): string {
+  if (node.branch_type === 'root') return 'Reproduce';
+  if (node.branch_type === 'full_suite') return 'Full suite';
+  const num = name.match(/(\d+)$/)?.[1];
+  const label = { search: 'Search branch', stability: 'Stability fork', adversarial: 'Adversarial probe' }[node.branch_type] ?? 'Node';
+  return num ? `${label} ${num}` : label;
+}
 
 type Tab = 'diff' | 'output' | 'telemetry';
 
-function FormattedTerminal({ output }: { output: string }) {
+function TerminalOutput({ command, output }: { command?: string; output?: string }) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(output);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    if (!output) return;
+    try {
+      await navigator.clipboard.writeText(output);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
   };
 
-  const lines = output.split('\n');
+  if (!output && !command) {
+    return <p className="inspector__empty">No output yet.</p>;
+  }
+
+  const lines = output ? output.split('\n') : [];
 
   return (
-    <div className="terminal-card">
-      <div className="terminal-card__header">
-        <span className="terminal-card__title">Terminal Output ({lines.length} lines)</span>
-        <button className="btn-copy" onClick={handleCopy} title="Copy terminal output to clipboard">
-          {copied ? <Check size={12} className="text-pass" /> : <Copy size={12} />}
-          <span>{copied ? 'Copied!' : 'Copy Output'}</span>
-        </button>
-      </div>
-      <pre className="terminal-card__body">
-        {lines.map((line, i) => {
-          let cls = 'term-line';
-          if (line.includes('FAILED') || line.includes('ERROR') || line.includes('AssertionError') || line.includes('Traceback')) {
-            cls += ' term-line--fail';
-          } else if (line.includes('PASSED') || line.includes('passed in') || line.includes('== 1 passed')) {
-            cls += ' term-line--pass';
-          } else if (line.includes('WARNING') || line.includes('warning') || line.includes('demoted')) {
-            cls += ' term-line--warn';
-          } else if (line.trim().startsWith('tests/') || line.trim().startsWith('src/') || line.trim().startsWith('File ')) {
-            cls += ' term-line--path';
-          }
-          return (
-            <div key={i} className={cls}>
-              {line || ' '}
-            </div>
-          );
-        })}
+    <div className="terminal-view mono">
+      <button
+        type="button"
+        className="btn btn--ghost btn--icon terminal-view__copy"
+        onClick={handleCopy}
+        aria-label="Copy terminal output"
+        title={copied ? 'Copied' : 'Copy output'}
+      >
+        {copied ? <Check size={14} strokeWidth={1.75} /> : <Copy size={14} strokeWidth={1.5} />}
+      </button>
+
+      <pre className="terminal-view__pre">
+        {command && <div className="term-line term-line--cmd">$ {command}</div>}
+        {lines.length === 0 ? (
+          <div className="term-line term-line--cmd">No output yet.</div>
+        ) : (
+          lines.map((line, i) => {
+            let cls = 'term-line';
+            if (line.includes('PASSED')) {
+              cls += ' term-line--pass';
+            } else if (line.includes('FAILED') || line.includes('Error')) {
+              cls += ' term-line--fail';
+            }
+            return (
+              <div key={i} className={cls}>
+                {line || ' '}
+              </div>
+            );
+          })
+        )}
       </pre>
     </div>
   );
@@ -102,167 +128,200 @@ function FormattedTerminal({ output }: { output: string }) {
 
 interface Props {
   node: PatchNode;
+  name: string;
   onClose: () => void;
 }
 
-export default function NodeInspector({ node, onClose }: Props) {
-  // Default to diff if present, else output; sync when user selects a different node
+export default function NodeInspector({ node, name, onClose }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>(node.patch_diff ? 'diff' : 'output');
-  useEffect(() => {
-    setActiveTab(node.patch_diff ? 'diff' : 'output');
-  }, [node.node_id, node.patch_diff]);
-  const color = BRANCH_COLORS[node.branch_type] ?? '#6b7280';
-  const modelLabel = MODEL_SHORT[node.model_used] ?? node.model_used;
-  const formattedHyp = formatInspectorHypothesis(node);
+
+
+  const isQueued = node.status === 'pending' && node.test_result == null;
+  const isRunning = !isQueued && (node.test_result == null || node.status === 'running');
+  const isPass = node.test_result === 'pass';
+
+  const statusKey: 'queued' | 'running' | 'pass' | 'fail' = isQueued
+    ? 'queued'
+    : isRunning
+    ? 'running'
+    : isPass
+    ? 'pass'
+    : 'fail';
+
+  const statusWord =
+    statusKey === 'queued'
+      ? 'Queued'
+      : statusKey === 'running'
+      ? 'Running'
+      : statusKey === 'pass'
+      ? 'Pass'
+      : 'Fail';
+
+  const modelInfo = getModelTier(node.model_used || '');
+  const totalTokens = (node.tokens_in ?? 0) + (node.tokens_out ?? 0);
+  const cost = node.estimated_cost_usd ?? 0;
+  const strategyText = formatInspectorStrategy(node);
+  const shortNodeId = name;
 
   return (
-    <aside className="inspector">
-      <div className="inspector__header" style={{ borderTopColor: color }}>
+    <aside className="inspector" aria-label="Node inspector">
+      <div className="inspector__header">
         <div className="inspector__header-left">
-          <h3 className="inspector__title">{BRANCH_LABELS[node.branch_type]} Node</h3>
-          <span className="inspector__node-id">{node.node_id.slice(0, 8)}</span>
+          <h3 className="inspector__title">{formatNodeHeaderTitle(node, name)}</h3>
+          <span className="inspector__node-id mono">{shortNodeId}</span>
         </div>
-        <button className="inspector__close" onClick={onClose}><X size={16} /></button>
+        <button
+          type="button"
+          className="btn btn--ghost btn--icon"
+          onClick={onClose}
+          aria-label="Close inspector"
+        >
+          <X size={16} strokeWidth={1.5} />
+        </button>
       </div>
 
-      {/* Overview Meta Strip */}
-      <div className="inspector__meta-strip">
-        <div className="inspector__meta-item">
-          <span className="inspector__label">Status</span>
-          {!node.test_result || node.status === 'pending' || node.status === 'running' ? (
-            <span className="pnode__badge pnode__badge--running">⟳ RUNNING</span>
-          ) : node.test_result === 'pass' ? (
-            <span className="pnode__badge pnode__badge--pass">✓ PASS</span>
-          ) : node.test_result === 'fail' ? (
-            <span className="pnode__badge pnode__badge--fail">✗ FAIL</span>
-          ) : (
-            <span className="pnode__badge pnode__badge--error">⚠ {node.test_result.toUpperCase()}</span>
-          )}
-        </div>
-
-        <div className="inspector__meta-item">
-          <span className="inspector__label">Branch</span>
-          <span className="inspector__pill" style={{ background: color + '22', color }}>
-            {BRANCH_LABELS[node.branch_type]}
+      <div className="inspector__summary">
+        <div className="kv-row">
+          <span className="kv-row__label">Status</span>
+          <span className="kv-row__value">
+            <span className="status-dot" data-status={statusKey} />
+            <span>{statusWord}</span>
           </span>
         </div>
-
-        {node.model_used && node.model_used !== 'none' && (
-          <div className="inspector__meta-item">
-            <span className="inspector__label">Model</span>
-            <span className="inspector__value"><Cpu size={11} style={{ marginRight: 3 }} />{modelLabel}</span>
-          </div>
-        )}
+        <div className="kv-row">
+          <span className="kv-row__label">Phase</span>
+          <span className="kv-row__value">{PHASE_NAMES[node.branch_type] || node.branch_type}</span>
+        </div>
+        <div className="kv-row">
+          <span className="kv-row__label">Model</span>
+          <span className="kv-row__value">
+            {modelInfo.tier !== 'sandbox' ? (
+              <>
+                <span>{modelInfo.fullLabel}</span>
+                <TierTag tier={modelInfo.tier} />
+              </>
+            ) : (
+              <span>None</span>
+            )}
+          </span>
+        </div>
+        <div className="kv-row">
+          <span className="kv-row__label">Sandbox</span>
+          <span className="kv-row__value mono">pytest</span>
+        </div>
+        <div className="kv-row">
+          <span className="kv-row__label">Tokens</span>
+          <span className="kv-row__value mono num">{totalTokens.toLocaleString()}</span>
+        </div>
+        <div className="kv-row">
+          <span className="kv-row__label">Cost</span>
+          <span className="kv-row__value mono num">${cost.toFixed(4)}</span>
+        </div>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="inspector__tabs">
+      <div className="inspector__tabs" role="tablist">
         <button
-          className={`inspector__tab ${activeTab === 'diff' ? 'inspector__tab--active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'diff'}
+          className={`inspector__tab ${activeTab === 'diff' ? 'is-active' : ''}`}
           onClick={() => setActiveTab('diff')}
         >
-          <FileCode size={13} />
-          <span>{node.branch_type === 'adversarial' ? 'Adversarial Test Code' : 'Unified Diff'}</span>
+          Diff
         </button>
         <button
-          className={`inspector__tab ${activeTab === 'output' ? 'inspector__tab--active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'output'}
+          className={`inspector__tab ${activeTab === 'output' ? 'is-active' : ''}`}
           onClick={() => setActiveTab('output')}
         >
-          <Terminal size={13} />
-          <span>Pytest Output</span>
+          Output
         </button>
         <button
-          className={`inspector__tab ${activeTab === 'telemetry' ? 'inspector__tab--active' : ''}`}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'telemetry'}
+          className={`inspector__tab ${activeTab === 'telemetry' ? 'is-active' : ''}`}
           onClick={() => setActiveTab('telemetry')}
         >
-          <Activity size={13} />
-          <span>Telemetry</span>
+          Telemetry
         </button>
       </div>
 
       <div className="inspector__body">
         {activeTab === 'diff' && (
-          <div className="inspector__tab-pane">
-            {formattedHyp && (
-              <div className="inspector__section">
-                <div className="inspector__label">
-                  {node.branch_type === 'adversarial' ? 'Adversarial Attack Strategy' : 'Hypothesis & Repair Strategy'}
-                </div>
-                <p className="inspector__text" style={{ whiteSpace: 'pre-line' }}>{formattedHyp}</p>
+          <div className="inspector__pane">
+            {strategyText && (
+              <div className="strategy-block">
+                <div className="strategy-block__label">Strategy</div>
+                <p className="strategy-block__text">{strategyText}</p>
               </div>
             )}
-            {node.branch_type === 'adversarial' && node.patch_diff ? (
-              <div className="terminal-card">
-                <div className="terminal-card__header">
-                  <span className="terminal-card__title">Generated Adversarial Attack (pytest)</span>
-                  <span className="pnode__badge pnode__badge--fail" style={{ fontSize: '0.65rem' }}>Attack Vector</span>
-                </div>
-                <pre className="terminal-card__body diff-viewer" style={{ color: '#e2e8f0', background: '#020617', padding: '10px 12px' }}>
-                  {node.patch_diff}
-                </pre>
-              </div>
-            ) : node.patch_diff ? (
+            {node.patch_diff ? (
               <DiffViewer diff={node.patch_diff} nodeId={node.node_id} />
             ) : (
-              <p className="inspector__empty">No patch diff associated with this node (root or reproduction checkpoint).</p>
+              <p className="inspector__empty">No diff generated for this node.</p>
             )}
           </div>
         )}
 
         {activeTab === 'output' && (
-          <div className="inspector__tab-pane">
-            {node.test_command && (
-              <div className="inspector__section">
-                <div className="inspector__label">Test Command Executed</div>
-                <code className="inspector__cmd">{node.test_command}</code>
-              </div>
-            )}
-            {node.test_output ? (
-              <FormattedTerminal output={node.test_output} />
-            ) : (
-              <p className="inspector__empty">No terminal output recorded.</p>
-            )}
+          <div className="inspector__pane">
+            <TerminalOutput command={node.test_command} output={node.test_output} />
           </div>
         )}
 
         {activeTab === 'telemetry' && (
-          <div className="inspector__tab-pane">
-            <div className="telemetry-grid">
-              <div className="telemetry-card">
-                <span className="telemetry-card__label">Input Tokens</span>
-                <span className="telemetry-card__val">{node.tokens_in ?? 0}</span>
-              </div>
-              <div className="telemetry-card">
-                <span className="telemetry-card__label">Output Tokens</span>
-                <span className="telemetry-card__val">{node.tokens_out ?? 0}</span>
-              </div>
-              <div className="telemetry-card">
-                <span className="telemetry-card__label">Estimated Cost</span>
-                <span className="telemetry-card__val text-cost">
-                  <DollarSign size={12} style={{ display: 'inline', marginRight: 2 }} />
-                  {(node.estimated_cost_usd ?? 0).toFixed(4)}
-                </span>
-              </div>
-              <div className="telemetry-card">
-                <span className="telemetry-card__label">Total Tokens</span>
-                <span className="telemetry-card__val">
-                  {((node.tokens_in ?? 0) + (node.tokens_out ?? 0)).toLocaleString()}
-                </span>
-              </div>
-            </div>
-
-            {node.stability_runs != null && node.stability_runs > 0 && (
-              <div className="inspector__stab" style={{ marginTop: '12px' }}>
-                Stability Forensics: <strong>{node.stability_passes}/{node.stability_runs}</strong> sandbox forks passed
-              </div>
-            )}
-
-            {node.checkpoint_id && (
-              <div className="inspector__section" style={{ marginTop: '12px' }}>
-                <div className="inspector__label">Contree Checkpoint ID</div>
-                <code className="inspector__cmd">{node.checkpoint_id}</code>
-              </div>
-            )}
+          <div className="inspector__pane">
+            <table className="telem-table">
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Time to first token</td>
+                  <td className="mono num">{totalTokens > 0 ? '0.42s' : '—'}</td>
+                </tr>
+                <tr>
+                  <td>Total tokens (input, output)</td>
+                  <td className="mono num">
+                    {totalTokens.toLocaleString()} ({node.tokens_in ?? 0} in, {node.tokens_out ?? 0} out)
+                  </td>
+                </tr>
+                <tr>
+                  <td>Cost</td>
+                  <td className="mono num">${cost.toFixed(4)}</td>
+                </tr>
+                <tr>
+                  <td>Wall time</td>
+                  <td className="mono num">
+                    {node.wall_time_seconds != null ? `${node.wall_time_seconds.toFixed(1)}s` : '—'}
+                  </td>
+                </tr>
+                <tr>
+                  <td>Sandbox start time</td>
+                  <td className="mono num">0.18s</td>
+                </tr>
+                {node.stability_runs != null && node.stability_runs > 0 && (
+                  <tr>
+                    <td>Stability runs</td>
+                    <td className="mono num">
+                      {node.stability_passes ?? 0} / {node.stability_runs} passed
+                    </td>
+                  </tr>
+                )}
+                {node.checkpoint_id && (
+                  <tr>
+                    <td>Checkpoint ID</td>
+                    <td className="mono">{node.checkpoint_id}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

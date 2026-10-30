@@ -1,195 +1,285 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useState } from 'react';
+import Logo from './Logo';
 import {
-  GitBranch, Zap, DollarSign, Clock, Percent, History, Shield, Plus,
-  X, Check, ChevronRight, Copy,
-} from 'lucide-react'
+  History,
+  FileText,
+  Plus,
+  X,
+  Check,
+  CircleX,
+  ChevronRight,
+  Loader,
+} from 'lucide-react';
 
-/* ---------- types ---------- */
-// Only the fields TopBar reads. Your real Run type just needs to include them.
-// repo_url and test_command are placeholders: rename to whatever your run object calls them.
 export interface TopBarRun {
-  status: string
-  total_cost_usd?: number | null
-  total_wall_time_seconds?: number | null
-  confidence_score?: number | null
-  confidence_report?: unknown
-  repo_url?: string | null          // e.g. "https://github.com/icodesAS/PatchTree"
-  test_command?: string | null      // e.g. "pytest Backend/tests/test_contree.py"
-  target_test?: string | null
+  run_id: string;
+  status: string;
+  total_cost_usd?: number | null;
+  total_wall_time_seconds?: number | null;
+  confidence_score?: number | null;
+  confidence_report?: unknown;
+  repo_url?: string | null;
+  target_test?: string | null;
 }
 
-export interface Stage { label: string }   // e.g. "Search (4 branches)"
+export interface Stage {
+  id: string;
+  label: string;
+}
 
-type RunState = 'idle' | 'running' | 'complete' | 'failed'
-type StepState = 'done' | 'active' | 'failed' | 'todo'
+type RunState = 'idle' | 'running' | 'complete' | 'failed';
+type StepState = 'done' | 'active' | 'failed' | 'todo';
 
 interface TopBarProps {
-  backendOnline: boolean
-  loading: boolean
-  run: TopBarRun | null
-  elapsed: number                   // seconds, live while loading
-  stages: Stage[]
-  currentStage: number              // 0-based index of the stage that is running now
-  hasNodes: boolean                 // patchNodes.length > 0
-  onHome: () => void
-  onHistory: () => void
-  onReport: () => void
-  onNewRun: () => void
+  loading: boolean;
+  run: TopBarRun | null;
+  elapsed: number;
+  liveCost?: number;
+  stages: Stage[];
+  currentStage: number;
+  hasNodes: boolean;
+  onHome: () => void;
+  onHistory: () => void;
+  onReport: () => void;
+  onNewRun: () => void;
+  onSelectPhase?: (phaseId: string) => void;
 }
 
-/* ---------- helpers ---------- */
-function stepState(i: number, current: number, run: RunState): StepState {
-  if (run === 'complete') return 'done'
-  if (i < current) return 'done'
-  if (i === current) return run === 'failed' ? 'failed' : run === 'running' ? 'active' : 'todo'
-  return 'todo'
+function stepState(i: number, current: number, runState: RunState): StepState {
+  if (runState === 'complete') return 'done';
+  if (i < current) return 'done';
+  if (i === current) return runState === 'failed' ? 'failed' : runState === 'running' ? 'active' : 'todo';
+  return 'todo';
 }
 
 const fmtTime = (s: number) =>
-  s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${s.toFixed(1)}s`
+  s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${s.toFixed(1)}s`;
 
-/* ---------- repo + test breadcrumb ---------- */
-function RepoCrumb({ repoUrl, testCommand }: { repoUrl?: string | null; testCommand?: string | null }) {
-  const [copied, setCopied] = useState(false)
-  if (!repoUrl && !testCommand) return null
+function RepoBreadcrumb({ repoUrl, runId }: { repoUrl?: string | null; runId?: string }) {
+  const [copied, setCopied] = useState(false);
+  if (!repoUrl && !runId) return null;
 
-  const repo = (repoUrl ?? '').replace(/^https?:\/\//, '').replace(/\.git$/, '').replace(/\/$/, '')
-  const copy = async () => {
-    if (!testCommand) return
+  const ownerRepo = (repoUrl ?? '')
+    .replace(/^https?:\/\/(www\.)?github\.com\//i, '')
+    .replace(/^https?:\/\//i, '')
+    .replace(/\.git$/, '')
+    .replace(/\/$/, '');
+
+  const handleCopy = async () => {
+    if (!repoUrl) return;
     try {
-      await navigator.clipboard.writeText(testCommand)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1200)
-    } catch { /* clipboard blocked: ignore */ }
-  }
+      await navigator.clipboard.writeText(repoUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore clipboard error */
+    }
+  };
 
   return (
-    <button
-      className="hud-crumb"
-      onClick={copy}
-      title={`${repo}${testCommand ? `  ›  ${testCommand}` : ''}\nClick to copy the test command`}
-    >
-      <GitBranch size={13} className="hud-crumb__icon" />
-      {repo && <span className="hud-crumb__repo">{repo}</span>}
-      {repo && testCommand && <ChevronRight size={12} className="hud-crumb__sep" />}
-      {testCommand && (
-        <span className="hud-crumb__cmd">
-          <span className="hud-crumb__prompt">$</span>{testCommand}
-        </span>
+    <div className="topbar__crumb-wrap">
+      <span className="topbar__divider" aria-hidden="true" />
+      <button
+        type="button"
+        className="topbar__crumb-repo"
+        onClick={handleCopy}
+        title={copied ? 'Copied' : `${repoUrl || ownerRepo} (Click to copy URL)`}
+      >
+        <span className="topbar__crumb-repo-text">{ownerRepo || 'repository'}</span>
+        {copied && <span className="topbar__copied-tag">Copied</span>}
+      </button>
+      {runId && (
+        <>
+          <ChevronRight size={12} className="topbar__crumb-sep" />
+          <span className="topbar__crumb-id mono">{runId}</span>
+        </>
       )}
-      <span className="hud-crumb__copy" data-copied={copied}>
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-      </span>
-    </button>
-  )
+    </div>
+  );
 }
 
-/* ---------- pipeline ribbon ---------- */
-function PipelineRibbon({ stages, currentStage, state }: { stages: Stage[]; currentStage: number; state: RunState }) {
+function PhaseBar({
+  stages,
+  currentStage,
+  state,
+  onSelectPhase,
+}: {
+  stages: Stage[];
+  currentStage: number;
+  state: RunState;
+  onSelectPhase?: (phaseId: string) => void;
+}) {
   return (
-    <nav className="hud-ribbon" aria-label="Pipeline progress">
+    <nav className="phasebar" aria-label="Pipeline progress">
       {stages.map((s, i) => {
-        const st = stepState(i, currentStage, state)
-        const prev = i > 0 ? stepState(i - 1, currentStage, state) : 'done'
-        const linkState = prev === 'done' ? (st === 'done' ? 'done' : st === 'todo' ? 'todo' : 'active') : 'todo'
-
-        // "Search (4 branches)"  ->  name "Search", meta "4 branches"
-        const m = s.label.match(/^(.*?)\s*\((.*)\)\s*$/)
-        const name = m ? m[1] : s.label
-        const meta = m ? m[2] : null
+        const st = stepState(i, currentStage, state);
+        const match = s.label.match(/^(.*?)\s*(\(.*\))\s*$/);
+        const name = match ? match[1] : s.label;
+        const countPart = match ? match[2] : null;
 
         return (
-          <Fragment key={i}>
-            {i > 0 && <span className="hud-link" data-state={linkState} />}
-            <span className="hud-step" data-state={st} aria-current={st === 'active' ? 'step' : undefined}>
-              <span className="hud-step__ico">
-                {st === 'done' ? <Check size={11} strokeWidth={3} />
-                  : st === 'failed' ? <X size={11} strokeWidth={3} />
-                  : st === 'active' ? <span className="hud-step__pulse" />
-                  : <span className="hud-step__num">{i + 1}</span>}
+          <Fragment key={s.id}>
+            {i > 0 && <ChevronRight size={12} className="phasebar__sep" aria-hidden="true" />}
+            <button
+              type="button"
+              className="phasebar__step"
+              data-state={st}
+              aria-current={st === 'active' ? 'step' : undefined}
+              onClick={() => onSelectPhase?.(s.id)}
+            >
+              <span className="phasebar__icon" aria-hidden="true">
+                {st === 'done' ? (
+                  <Check size={14} strokeWidth={1.75} />
+                ) : st === 'failed' ? (
+                  <CircleX size={14} strokeWidth={1.75} />
+                ) : st === 'active' ? (
+                  <Loader size={14} strokeWidth={1.75} className="spin" />
+                ) : (
+                  <span className="phasebar__pending-dot" />
+                )}
               </span>
-              <span className="hud-step__name">{name}</span>
-              {meta && <span className="hud-step__meta">{meta}</span>}
-            </span>
+              <span className="phasebar__label">
+                {name}
+                {countPart && <span className="phasebar__count"> {countPart}</span>}
+              </span>
+            </button>
           </Fragment>
-        )
+        );
       })}
     </nav>
-  )
+  );
 }
 
-/* ---------- the bar ---------- */
 export default function TopBar({
-  backendOnline: _backendOnline, loading, run, elapsed, stages, currentStage, hasNodes,
-  onHome, onHistory, onReport, onNewRun,
+  loading,
+  run,
+  elapsed,
+  liveCost = 0,
+  stages,
+  currentStage,
+  hasNodes,
+  onHome,
+  onHistory,
+  onReport,
+  onNewRun,
+  onSelectPhase,
 }: TopBarProps) {
-  const state: RunState =
-    loading ? 'running' : run?.status === 'complete' ? 'complete' : run?.status === 'failed' ? 'failed' : 'idle'
+  const state: RunState = loading
+    ? 'running'
+    : run?.status === 'complete'
+    ? 'complete'
+    : run?.status === 'failed'
+    ? 'failed'
+    : 'idle';
 
-  const secs = loading ? elapsed : run?.total_wall_time_seconds
-  const conf = run?.confidence_score != null
-    ? Math.round(run.confidence_score <= 1 ? run.confidence_score * 100 : run.confidence_score)
-    : null
-  const statusText = (loading ? 'running' : run?.status ?? '').toUpperCase()
-  const showRibbon = loading || (!!run && hasNodes)
-  const canReport = !!run && (!!run.confidence_report || run.status === 'complete' || run.status === 'failed')
+  const secs = loading ? elapsed : run?.total_wall_time_seconds;
+  const cost = loading && !run?.total_cost_usd ? liveCost : run?.total_cost_usd;
+  const conf =
+    run?.confidence_score != null
+      ? Math.round(run.confidence_score <= 1 ? run.confidence_score * 100 : run.confidence_score)
+      : null;
+
+  const statusLabel =
+    state === 'running'
+      ? 'Running'
+      : state === 'complete'
+      ? 'Complete'
+      : state === 'failed'
+      ? 'Failed'
+      : 'Idle';
+
+  const showRibbon = loading || (Boolean(run) && hasNodes);
+  const canReport =
+    Boolean(run) && (Boolean(run?.confidence_report) || run?.status === 'complete' || run?.status === 'failed');
 
   return (
-    <header className="hud" data-run={state}>
-      {/* brand */}
-      <button className="hud-brand" onClick={onHome} aria-label="PatchTree home">
-        <GitBranch size={20} className="hud-brand__mark" />
-        <span className="hud-brand__name">PatchTree</span>
-      </button>
+    <header className="topbar-shell">
+      <div className="topbar">
+        <button type="button" className="topbar__brand" onClick={onHome} aria-label="PatchTree home">
+          <Logo size={24} />
+          <span className="topbar__name">PatchTree</span>
+        </button>
 
-      {/* repo + test */}
-      {run && <RepoCrumb repoUrl={run.repo_url} testCommand={run.test_command || run.target_test} />}
+        {run && <RepoBreadcrumb repoUrl={run.repo_url} runId={run.run_id} />}
 
-      {/* telemetry */}
-      {run && (
-        <div className="hud-telem">
-          <span className="hud-pill" data-tone={state}>
-            {state === 'running' ? <span className="hud-beacon" /> : <Zap size={13} />}
-            {statusText}
-          </span>
-          {run.total_cost_usd != null && (
-            <span className="hud-pill"><DollarSign size={13} />
-              <span key={run.total_cost_usd} className={`hud-num ${loading ? 'is-changing' : ''}`}>
-                {run.total_cost_usd.toFixed(4)}
-              </span>
+        <div className="topbar__spacer" />
+
+        {run && (
+          <div className="topbar__summary" aria-label="Run summary">
+            <span className="topbar__status">
+              <span className="status-dot" data-status={state === 'complete' ? 'pass' : state === 'failed' ? 'fail' : 'running'} />
+              <span className="topbar__status-word">{statusLabel}</span>
             </span>
-          )}
-          {secs != null && (
-            <span className="hud-pill"><Clock size={13} /><span className="hud-num">{fmtTime(secs)}</span></span>
-          )}
-          {conf != null && (
-            <span className="hud-pill" data-tone="confidence"><Percent size={13} /><span className="hud-num">{conf}%</span></span>
-          )}
-        </div>
-      )}
 
-      {/* actions */}
-      <div className="hud-actions">
-        <button className="hud-btn" onClick={onHistory}>
-          <History size={14} /><span className="hud-btn__label">History</span>
-        </button>
-        {canReport && (
-          <button className="hud-btn" data-variant="ghost" onClick={onReport}>
-            <Shield size={14} /><span className="hud-btn__label">View Report</span>
-          </button>
+            {cost != null && (
+              <>
+                <span className="topbar__divider" aria-hidden="true" />
+                <span className="topbar__metric mono num" title="Total model cost">
+                  ${cost.toFixed(4)}
+                </span>
+              </>
+            )}
+
+            {secs != null && (
+              <>
+                <span className="topbar__divider" aria-hidden="true" />
+                <span className="topbar__metric mono num" title="Total run time">
+                  {fmtTime(secs)}
+                </span>
+              </>
+            )}
+
+            {conf != null && (
+              <>
+                <span className="topbar__divider" aria-hidden="true" />
+                <span
+                  className="topbar__metric num"
+                  title="Share of repeat runs that passed for the winning patch"
+                >
+                  {conf}% stable
+                </span>
+              </>
+            )}
+          </div>
         )}
-        {hasNodes && (
-          <button className="hud-btn" data-variant="ghost" onClick={onHome}>
-            <X size={14} /><span className="hud-btn__label">Close Run</span>
+
+        <div className="topbar__actions">
+          <button type="button" className="btn btn--ghost btn--sm" onClick={onHistory}>
+            <History size={15} strokeWidth={1.5} />
+            <span>History</span>
           </button>
-        )}
-        <button className="hud-btn" data-variant="primary" onClick={onNewRun} disabled={loading}>
-          <Plus size={14} /><span className="hud-btn__label">New Run</span>
-        </button>
+          {canReport && (
+            <button type="button" className="btn btn--secondary btn--sm" onClick={onReport}>
+              <FileText size={15} strokeWidth={1.5} />
+              <span>View report</span>
+            </button>
+          )}
+          {hasNodes && (
+            <button type="button" className="btn btn--ghost btn--sm" onClick={onHome}>
+              <X size={15} strokeWidth={1.5} />
+              <span>Close run</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn btn--primary btn--sm"
+            onClick={onNewRun}
+            disabled={loading}
+          >
+            <Plus size={15} strokeWidth={1.5} />
+            <span>New run</span>
+          </button>
+        </div>
       </div>
 
-      {/* pipeline */}
-      {showRibbon && <PipelineRibbon stages={stages} currentStage={currentStage} state={state} />}
+      {showRibbon && (
+        <PhaseBar
+          stages={stages}
+          currentStage={currentStage}
+          state={state}
+          onSelectPhase={onSelectPhase}
+        />
+      )}
     </header>
-  )
+  );
 }

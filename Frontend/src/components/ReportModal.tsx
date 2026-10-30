@@ -1,157 +1,22 @@
 import { useState, useEffect } from 'react';
-import { X, Shield, Clock, DollarSign, Percent, Copy, Check, Download, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
+import { X, Copy, Check, Download } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import type { Run } from '../types';
+import type { PatchNode, Run } from '../types';
 import { getRun } from '../api';
+import DiffViewer from './DiffViewer';
 
 interface Props {
   run: Run;
+  nodes?: PatchNode[];
   onClose: () => void;
 }
 
-function ScoreGauge({ score }: { score: number }) {
-  const pct = Math.min(100, Math.max(0, score));
-  const isHigh = pct >= 80;
-  const isMid = pct >= 50 && pct < 80;
-
-  const colorStart = isHigh ? '#10b981' : isMid ? '#f59e0b' : '#ef4444';
-  const colorEnd = isHigh ? '#34d399' : isMid ? '#fbbf24' : '#f87171';
-  const glowColor = isHigh ? 'rgba(16, 185, 129, 0.45)' : isMid ? 'rgba(245, 158, 11, 0.45)' : 'rgba(239, 68, 68, 0.45)';
-
-  const r = 42;
-  const circ = 2 * Math.PI * r;
-  const strokeOffset = circ - (pct / 100) * circ;
-
-  return (
-    <div className="gauge-wrap">
-      <div className="gauge" style={{ filter: `drop-shadow(0 0 16px ${glowColor})` }}>
-        <svg width="124" height="124" viewBox="0 0 124 124">
-          <defs>
-            <linearGradient id="scoreGaugeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor={colorStart} />
-              <stop offset="100%" stopColor={colorEnd} />
-            </linearGradient>
-          </defs>
-          {/* Background track circle */}
-          <circle
-            cx="62"
-            cy="62"
-            r={r}
-            fill="none"
-            stroke="rgba(30, 41, 59, 0.7)"
-            strokeWidth="10"
-          />
-          {/* Animated score ring */}
-          <circle
-            cx="62"
-            cy="62"
-            r={r}
-            fill="none"
-            stroke="url(#scoreGaugeGrad)"
-            strokeWidth="10"
-            strokeDasharray={circ}
-            strokeDashoffset={strokeOffset}
-            strokeLinecap="round"
-            transform="rotate(-90 62 62)"
-            className="gauge-circle-progress"
-          />
-          {/* Centered Percentage */}
-          <text
-            x="62"
-            y="58"
-            textAnchor="middle"
-            fill="#f8fafc"
-            fontSize="24"
-            fontWeight="800"
-            fontFamily="monospace"
-            letterSpacing="-0.03em"
-          >
-            {pct}%
-          </text>
-          <text
-            x="62"
-            y="74"
-            textAnchor="middle"
-            fill="#94a3b8"
-            fontSize="9"
-            fontWeight="700"
-            letterSpacing="0.08em"
-          >
-            CONFIDENCE
-          </text>
-        </svg>
-      </div>
-
-      <div
-        className={`gauge__badge ${
-          isHigh ? 'gauge__badge--pass' : isMid ? 'gauge__badge--warn' : 'gauge__badge--fail'
-        }`}
-      >
-        {isHigh ? (
-          <>
-            <CheckCircle size={13} />
-            <span>PRODUCTION-READY</span>
-          </>
-        ) : isMid ? (
-          <>
-            <AlertTriangle size={13} />
-            <span>REVIEW NEEDED</span>
-          </>
-        ) : (
-          <>
-            <XCircle size={13} />
-            <span>HONEST FAILURE</span>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function normalizeReportMarkdown(md: string): string {
-  const cleaned = md
-    .replace(/\[!(IMPORTANT|NOTE|TIP|WARNING|CAUTION)\]\s*/g, '**$1:** ')
-    .replace(/<br\s*\/?>/gi, ' · ');
-
-  const lines = cleaned.split('\n');
-  const out: string[] = [];
-  let headers: string[] | null = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
-      const cells = trimmed.slice(1, -1).split('|').map((c) => c.trim());
-      if (cells.every((c) => /^[-:\s]+$/.test(c))) {
-        continue;
-      }
-      if (!headers && i + 1 < lines.length && /^\|\s*[-:]+/.test(lines[i + 1].trim())) {
-        headers = cells;
-        continue;
-      }
-      if (headers && cells.length > 1) {
-        const primary = cells[0];
-        const details = cells
-          .slice(1)
-          .map((val, idx) => (headers && headers[idx + 1] ? `${headers[idx + 1]}: ${val}` : val))
-          .filter(Boolean)
-          .join(' — ');
-        out.push(`- **${primary}** (${details})`);
-        continue;
-      }
-    } else {
-      headers = null;
-    }
-    out.push(lines[i]);
-  }
-  return out.join('\n');
-}
-
-export default function ReportModal({ run: initialRun, onClose }: Props) {
+export default function ReportModal({ run: initialRun, nodes = [], onClose }: Props) {
   const [run, setRun] = useState<Run>(initialRun);
-  const [copiedReport, setCopiedReport] = useState(false);
+  const [copiedDiff, setCopiedDiff] = useState(false);
 
   useEffect(() => {
-    if (!run.confidence_report && run.run_id && !run.run_id.startsWith('mock-')) {
+    if (!run.confidence_report && run.run_id && !run.run_id.startsWith('demo-') && !run.run_id.startsWith('mock-')) {
       getRun(run.run_id)
         .then((fresh) => {
           if (fresh && fresh.confidence_report) setRun(fresh);
@@ -163,174 +28,187 @@ export default function ReportModal({ run: initialRun, onClose }: Props) {
   const rawScore = run.confidence_score ?? 0;
   const score = Math.round(rawScore <= 1 ? rawScore * 100 : rawScore);
 
-  const handleCopyReport = () => {
-    if (!run.confidence_report) return;
-    navigator.clipboard.writeText(run.confidence_report);
-    setCopiedReport(true);
-    setTimeout(() => setCopiedReport(false), 2000);
+  const winnerNode = nodes.find((n) => n.node_id === run.winner_node_id) ?? null;
+  const adversarialNodes = nodes.filter((n) => n.branch_type === 'adversarial');
+  const stabilityNodes = nodes.filter((n) => n.branch_type === 'stability');
+  const stabPassed = stabilityNodes.filter((n) => n.test_result === 'pass').length;
+  const stabTotal = stabilityNodes.length || 5;
+
+  const ownerRepo = (run.repo_url ?? '')
+    .replace(/^https?:\/\/(www\.)?github\.com\//i, '')
+    .replace(/^https?:\/\//i, '')
+    .replace(/\.git$/, '')
+    .replace(/\/$/, '');
+
+  const handleCopyDiff = async () => {
+    const text = winnerNode?.patch_diff || run.confidence_report || '';
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedDiff(true);
+      setTimeout(() => setCopiedDiff(false), 1500);
+    } catch {
+      /* ignore */
+    }
   };
 
-  const handleDownloadAudit = () => {
-    const summaryMd = `# PatchTree Verification Audit Summary
-**Run ID:** \`${run.run_id}\`
-**Repository:** \`${run.repo_url || 'N/A'}\`
-**Status:** \`${run.status.toUpperCase()}\`
-**Confidence Score:** **${score}%**
-**Target Test:** \`${run.target_test || 'N/A'}\`
-**Full Suite Result:** \`${run.full_suite_result || 'N/A'}\`
-**Adversarial Invariant Probes:** ${run.adversarial_survived ?? 0}/${run.adversarial_runs ?? 0} survived
-**Total Compute Cost:** $${(run.total_cost_usd ?? 0).toFixed(4)} USD
-**Total Wall Time:** ${(run.total_wall_time_seconds ?? 0).toFixed(1)}s
-**Audit Timestamp:** ${run.completed_at || new Date().toISOString()}
-
----
-
-## Executive Confidence Report
-
-${run.confidence_report || 'No detailed confidence report recorded.'}
-
----
-*Generated autonomously by PatchTree Agent Verification Engine (Nebius Nemotron 550B & Contree Sandbox)*
-`;
-
-    const blob = new Blob([summaryMd], { type: 'text/markdown;charset=utf-8' });
+  const handleDownloadPatch = () => {
+    const patchContent = winnerNode?.patch_diff || run.confidence_report || '';
+    const filename = winnerNode?.patch_diff
+      ? `patch-${run.run_id.slice(0, 8)}.patch`
+      : `report-${run.run_id.slice(0, 8)}.md`;
+    const blob = new Blob([patchContent], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `patchtree-audit-${run.run_id.slice(0, 8)}.md`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
 
+  const statusTone = run.status === 'complete' ? 'pass' : run.status === 'failed' ? 'fail' : 'running';
+  const statusWord = run.status === 'complete' ? 'Complete' : run.status === 'failed' ? 'Failed' : 'Running';
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal--wide report-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal__header">
-          <div className="modal__title-wrap">
-            <Shield size={18} className="modal__icon" />
+      <div
+        className="modal modal--report"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="report-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="report-view">
+          <div className="report-view__top">
             <div>
-              <h2 className="modal__title">Executive Confidence Report</h2>
-              <span className="modal__subtitle">
-                Autonomous verification audit generated by Nemotron Ultra 550B
-              </span>
-            </div>
-          </div>
-          <div className="modal__actions">
-            {run.confidence_report && (
-              <>
-                <button
-                  className="btn-copy"
-                  onClick={handleCopyReport}
-                  title="Copy markdown report to clipboard"
-                >
-                  {copiedReport ? <Check size={13} className="text-pass" /> : <Copy size={13} />}
-                  <span>{copiedReport ? 'Copied!' : 'Copy Markdown Report'}</span>
-                </button>
-                <button
-                  className="btn-copy"
-                  onClick={handleDownloadAudit}
-                  title="Download complete audit summary markdown file"
-                >
-                  <Download size={13} />
-                  <span>Download Audit Summary</span>
-                </button>
-              </>
-            )}
-            <button className="inspector__close" onClick={onClose} title="Close modal">
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-
-        <div className="report-modal__body">
-          <div className="report-modal__sidebar">
-            <ScoreGauge score={score} />
-
-            <div className="report-modal__stats">
-              {run.confidence_score != null && (
-                <div className="telemetry-pill telemetry-pill--highlight">
-                  <div className="telemetry-pill__label">Confidence Score</div>
-                  <div className="telemetry-pill__val">
-                    <Percent size={13} />
-                    <span>{score}%</span>
-                  </div>
-                </div>
-              )}
-
-              {run.total_cost_usd != null && (
-                <div className="telemetry-pill">
-                  <div className="telemetry-pill__label">Compute Cost</div>
-                  <div className="telemetry-pill__val text-cost">
-                    <DollarSign size={13} />
-                    <span>${run.total_cost_usd.toFixed(4)}</span>
-                  </div>
-                </div>
-              )}
-
-              {run.total_wall_time_seconds != null && (
-                <div className="telemetry-pill">
-                  <div className="telemetry-pill__label">Execution Wall Time</div>
-                  <div className="telemetry-pill__val">
-                    <Clock size={13} />
-                    <span>{run.total_wall_time_seconds.toFixed(1)}s</span>
-                  </div>
-                </div>
-              )}
-
-              {run.adversarial_runs != null && run.adversarial_runs > 0 && (
-                <div className="telemetry-pill">
-                  <div className="telemetry-pill__label">Adversarial Resistance</div>
-                  <div className="telemetry-pill__val text-warn">
-                    <Shield size={13} />
-                    <span>
-                      {run.adversarial_survived}/{run.adversarial_runs} survived
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {run.full_suite_result && run.full_suite_result !== 'skipped' && (
-                <div
-                  className={`telemetry-pill ${
-                    run.full_suite_result === 'pass'
-                      ? 'telemetry-pill--pass'
-                      : 'telemetry-pill--fail'
-                  }`}
-                >
-                  <div className="telemetry-pill__label">Full Test Suite</div>
-                  <div className="telemetry-pill__val">
-                    {run.full_suite_result === 'pass' ? '✓ PASS' : '✗ FAIL'}
-                  </div>
-                </div>
-              )}
-              {run.full_suite_result === 'skipped' && run.full_suite_test && (
-                <div className="telemetry-pill telemetry-pill--neutral">
-                  <div className="telemetry-pill__label">Full Test Suite</div>
-                  <div className="telemetry-pill__val">— SKIPPED</div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="report-modal__content">
-            {run.confidence_report ? (
-              <div className="md-report">
-                <ReactMarkdown>
-                  {normalizeReportMarkdown(run.confidence_report)}
-                </ReactMarkdown>
+              <h2 id="report-modal-title" className="report-view__title">
+                Run report
+              </h2>
+              <div className="report-view__sub">
+                <span>{ownerRepo || 'repository'}</span>
+                <span className="report-view__sep">·</span>
+                <span className="mono">{run.run_id}</span>
               </div>
-            ) : (
-              <div className="report-modal__empty">
-                <Shield size={32} />
-                <p>Generating executive confidence report from Nemotron Ultra…</p>
-                <span className="text-muted" style={{ fontSize: '0.8rem' }}>
-                  Forensics and adversarial verifications are being summarized.
+            </div>
+
+            <div className="report-view__actions">
+              {(winnerNode?.patch_diff || run.confidence_report) && (
+                <>
+                  <button type="button" className="btn btn--secondary" onClick={handleCopyDiff}>
+                    {copiedDiff ? <Check size={14} strokeWidth={1.75} /> : <Copy size={14} strokeWidth={1.5} />}
+                    <span>{copiedDiff ? 'Copied' : 'Copy diff'}</span>
+                  </button>
+                  <button type="button" className="btn btn--primary" onClick={handleDownloadPatch}>
+                    <Download size={14} strokeWidth={1.5} />
+                    <span>Download .patch</span>
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                className="btn btn--ghost btn--icon"
+                onClick={onClose}
+                aria-label="Close report"
+              >
+                <X size={16} strokeWidth={1.5} />
+              </button>
+            </div>
+          </div>
+
+          <section className="report-section">
+            <h3 className="section-title">Summary</h3>
+            <div className="report-kv-box">
+              <div className="kv-row">
+                <span className="kv-row__label">Result</span>
+                <span className="kv-row__value">
+                  <span className="status-dot" data-status={statusTone} />
+                  <span>{statusWord}</span>
                 </span>
               </div>
-            )}
-          </div>
+              <div className="kv-row">
+                <span className="kv-row__label">Winning patch</span>
+                <span className="kv-row__value mono">
+                  {run.winner_node_id ? run.winner_node_id.replace(/-0+(\d+)$/, '-$1').slice(0, 12) : 'None'}
+                </span>
+              </div>
+              <div className="kv-row">
+                <span className="kv-row__label">Stability</span>
+                <span className="kv-row__value num">
+                  {score}% stable ({stabPassed}/{stabTotal} runs)
+                </span>
+              </div>
+              <div className="kv-row">
+                <span className="kv-row__label">Adversarial attacks survived</span>
+                <span className="kv-row__value mono num">
+                  {run.adversarial_survived ?? 0} / {run.adversarial_runs ?? 0}
+                </span>
+              </div>
+              <div className="kv-row">
+                <span className="kv-row__label">Full suite</span>
+                <span className="kv-row__value">
+                  {run.full_suite_result === 'pass'
+                    ? 'Passed'
+                    : run.full_suite_result === 'fail'
+                    ? 'Failed'
+                    : 'Skipped'}
+                </span>
+              </div>
+              <div className="kv-row">
+                <span className="kv-row__label">Total cost</span>
+                <span className="kv-row__value mono num">${(run.total_cost_usd ?? 0).toFixed(4)}</span>
+              </div>
+              <div className="kv-row">
+                <span className="kv-row__label">Total time</span>
+                <span className="kv-row__value mono num">{(run.total_wall_time_seconds ?? 0).toFixed(1)}s</span>
+              </div>
+            </div>
+          </section>
+
+          {winnerNode?.patch_diff && (
+            <section className="report-section">
+              <h3 className="section-title">Winning diff</h3>
+              <DiffViewer diff={winnerNode.patch_diff} nodeId={winnerNode.node_id} />
+            </section>
+          )}
+
+          {adversarialNodes.length > 0 && (
+            <section className="report-section">
+              <h3 className="section-title">Adversarial attacks</h3>
+              <div className="examples-list">
+                {adversarialNodes.map((adv, idx) => {
+                  const survived = adv.test_result === 'pass';
+                  return (
+                    <div key={adv.node_id} className="attack-row">
+                      <span className="attack-row__name">
+                        {adv.hypothesis || `Adversarial probe ${idx + 1}`}
+                      </span>
+                      <span
+                        className="attack-row__result"
+                        data-status={survived ? 'pass' : 'fail'}
+                      >
+                        <span className="status-dot" data-status={survived ? 'pass' : 'fail'} />
+                        <span>{survived ? 'Survived' : 'Broke patch'}</span>
+                      </span>
+                      <span className="attack-row__cost mono num">
+                        ${(adv.estimated_cost_usd ?? 0).toFixed(4)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {run.confidence_report && (
+            <section className="report-section">
+              <h3 className="section-title">Analysis</h3>
+              <div className="md-report">
+                <ReactMarkdown>{run.confidence_report}</ReactMarkdown>
+              </div>
+            </section>
+          )}
         </div>
       </div>
     </div>

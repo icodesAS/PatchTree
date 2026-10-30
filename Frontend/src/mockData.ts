@@ -4,7 +4,6 @@ const RUN_ID = 'demo-run-001';
 const WINNER = 'search-002';
 
 const nodes: PatchNode[] = [
-  // ── Root ──────────────────────────────────────────────────────────────────
   {
     node_id: 'root-001', run_id: RUN_ID, parent_node_id: null,
     branch_type: 'root',
@@ -15,7 +14,6 @@ const nodes: PatchNode[] = [
     model_used: 'none', status: 'done',
     tokens_in: 0, tokens_out: 0, estimated_cost_usd: 0, wall_time_seconds: 2.1,
   },
-  // ── Search branches (children of root) ────────────────────────────────────
   {
     node_id: 'search-001', run_id: RUN_ID, parent_node_id: 'root-001',
     branch_type: 'search',
@@ -60,77 +58,74 @@ const nodes: PatchNode[] = [
     model_used: 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B', status: 'done',
     tokens_in: 265, tokens_out: 61, estimated_cost_usd: 0.0009, wall_time_seconds: 3.4,
   },
-  // ── Stability forks (children of WINNER) ──────────────────────────────────
   {
     node_id: 'stab-001', run_id: RUN_ID, parent_node_id: WINNER,
     branch_type: 'stability',
-    hypothesis: 'Stability run 1/5 — re-executing same test in isolated fork.',
+    hypothesis: 'Run 1 of 5',
     patch_diff: '', test_command: 'pytest tests/test_discount.py -v -p no:randomly',
     test_result: 'pass',
     test_output: 'PASSED tests/test_discount.py::test_calculate_discount\n1 passed in 0.11s',
-    model_used: 'none', is_stable: true, stability_passes: 1, stability_runs: 1, status: 'done',
+    model_used: 'none', is_stable: true, stability_passes: 1, stability_runs: 5, status: 'done',
     tokens_in: 0, tokens_out: 0, estimated_cost_usd: 0, wall_time_seconds: 1.1,
   },
   {
     node_id: 'stab-002', run_id: RUN_ID, parent_node_id: WINNER,
-    branch_type: 'stability', hypothesis: 'Stability run 2/5.',
+    branch_type: 'stability', hypothesis: 'Run 2 of 5',
     patch_diff: '', test_command: 'pytest tests/test_discount.py -v -p no:randomly',
     test_result: 'pass', test_output: 'PASSED\n1 passed in 0.10s',
-    model_used: 'none', is_stable: true, stability_passes: 2, stability_runs: 2, status: 'done',
+    model_used: 'none', is_stable: true, stability_passes: 2, stability_runs: 5, status: 'done',
     tokens_in: 0, tokens_out: 0, estimated_cost_usd: 0, wall_time_seconds: 1.0,
   },
   {
     node_id: 'stab-003', run_id: RUN_ID, parent_node_id: WINNER,
-    branch_type: 'stability', hypothesis: 'Stability run 3/5.',
+    branch_type: 'stability', hypothesis: 'Run 3 of 5',
     patch_diff: '', test_command: 'pytest tests/test_discount.py -v -p no:randomly',
     test_result: 'pass', test_output: 'PASSED\n1 passed in 0.13s',
-    model_used: 'none', is_stable: true, stability_passes: 3, stability_runs: 3, status: 'done',
+    model_used: 'none', is_stable: true, stability_passes: 3, stability_runs: 5, status: 'done',
     tokens_in: 0, tokens_out: 0, estimated_cost_usd: 0, wall_time_seconds: 1.3,
   },
   {
     node_id: 'stab-004', run_id: RUN_ID, parent_node_id: WINNER,
-    branch_type: 'stability', hypothesis: 'Stability run 4/5.',
+    branch_type: 'stability', hypothesis: 'Run 4 of 5',
     patch_diff: '', test_command: 'pytest tests/test_discount.py -v -p no:randomly',
     test_result: 'pass', test_output: 'PASSED\n1 passed in 0.12s',
-    model_used: 'none', is_stable: true, stability_passes: 4, stability_runs: 4, status: 'done',
+    model_used: 'none', is_stable: true, stability_passes: 4, stability_runs: 5, status: 'done',
     tokens_in: 0, tokens_out: 0, estimated_cost_usd: 0, wall_time_seconds: 1.2,
   },
   {
     node_id: 'stab-005', run_id: RUN_ID, parent_node_id: WINNER,
-    branch_type: 'stability', hypothesis: 'Stability run 5/5 — STABLE. All 5 runs passed.',
+    branch_type: 'stability', hypothesis: 'Run 5 of 5',
     patch_diff: '', test_command: 'pytest tests/test_discount.py -v -p no:randomly',
-    test_result: 'pass', test_output: 'PASSED\n1 passed in 0.11s\n✓ Stability verified: 5/5 runs passed.',
+    test_result: 'pass', test_output: 'PASSED\n1 passed in 0.11s\nStability verified: 5/5 runs passed.',
     model_used: 'none', is_stable: true, stability_passes: 5, stability_runs: 5, status: 'done',
     tokens_in: 0, tokens_out: 0, estimated_cost_usd: 0, wall_time_seconds: 1.1,
   },
-  // ── Adversarial forks (children of WINNER — not of stab-005) ─────────────
   {
     node_id: 'adv-001', run_id: RUN_ID, parent_node_id: WINNER,
     branch_type: 'adversarial',
-    hypothesis: 'Attack: boundary value — exactly 100% discount should yield 0.0, not raise ValueError.',
+    hypothesis: 'Boundary value: exactly 100% discount yields 0.0 without ValueError',
     patch_diff: `+++ tests/test_attack_1.py\n@@ -0,0 +1,5 @@\n+def test_exactly_100_pct():\n+    result = calculate_discount(200.0, 100.0)\n+    assert result == 0.0, f"Expected 0.0 but got {result}"`,
     test_command: 'pytest tests/test_attack_1.py -v',
     test_result: 'pass',
-    test_output: 'PASSED tests/test_attack_1.py::test_exactly_100_pct\n🛡 Patch survived adversarial attack #1.\n1 passed in 0.09s',
+    test_output: 'PASSED tests/test_attack_1.py::test_exactly_100_pct\nPatch survived adversarial attack #1.\n1 passed in 0.09s',
     model_used: 'nvidia/Nemotron-Super-70B', status: 'done',
     tokens_in: 680, tokens_out: 145, estimated_cost_usd: 0.0089, wall_time_seconds: 6.2,
   },
   {
     node_id: 'adv-002', run_id: RUN_ID, parent_node_id: WINNER,
     branch_type: 'adversarial',
-    hypothesis: 'Attack: float precision edge — discount of 99.9999999 should not produce negative results.',
+    hypothesis: 'Float precision edge: discount of 99.9999999 produces non-negative result',
     patch_diff: `+++ tests/test_attack_2.py\n@@ -0,0 +1,4 @@\n+def test_float_precision():\n+    result = calculate_discount(1000.0, 99.9999999)\n+    assert result >= 0.0, f"Got negative: {result}"`,
     test_command: 'pytest tests/test_attack_2.py -v',
     test_result: 'pass',
-    test_output: 'PASSED tests/test_attack_2.py::test_float_precision\n🛡 Patch survived adversarial attack #2.\n1 passed in 0.08s',
+    test_output: 'PASSED tests/test_attack_2.py::test_float_precision\nPatch survived adversarial attack #2.\n1 passed in 0.08s',
     model_used: 'nvidia/Nemotron-Super-70B', status: 'done',
     tokens_in: 590, tokens_out: 128, estimated_cost_usd: 0.0091, wall_time_seconds: 5.8,
   },
-  // ── Full suite (child of WINNER) ───────────────────────────────────────────
   {
     node_id: 'fullsuite-001', run_id: RUN_ID, parent_node_id: WINNER,
     branch_type: 'full_suite',
-    hypothesis: 'Final regression check: run entire test suite against winning patch.',
+    hypothesis: 'Run entire test suite against winning patch.',
     patch_diff: '', test_command: 'pytest tests/ -v --tb=short',
     test_result: 'pass',
     test_output: `PASSED tests/test_discount.py::test_calculate_discount
@@ -160,56 +155,20 @@ const run: Run = {
   bug_description: 'calculate_discount() returns negative values when discount_pct > 100, causing downstream cart total to go negative.',
   target_test: 'pytest tests/test_discount.py::test_calculate_discount',
   full_suite_test: 'pytest',
-  confidence_report: `# PatchTree Confidence Report
-**Run ID:** demo-run-001  
-**Generated by:** Nemotron Ultra  
-**Verdict:** HIGH CONFIDENCE — Merge Recommended ✅
-
----
-
-## Summary
+  confidence_report: `## Summary
 
 The patch introduces a validation guard in \`calculate_discount()\` that raises a \`ValueError\` when \`discount_pct\` falls outside the valid \`[0, 100]\` range. This is a precise, minimal fix that directly addresses the reported bug without side effects.
 
-## Evidence
+## Verification evidence
 
-### 1. Search Phase (4 branches explored)
-| Branch | Model | Result |
-|---|---|---|
-| Clamp with max/min | Nano 30B | ✗ Fail — masked errors |
-| **ValueError guard** | **Nano 30B** | **✅ PASS — selected as winner** |
-| Early-return 0.0 | Super 120B | ✗ Fail — broke valid paths |
-| abs() % 101 | Nano 30B | ✗ Fail — TypeError |
-
-### 2. Stability Verification (5/5 runs)
-
-The winning branch was re-executed 5 times in independent sandbox forks. **All 5 passed.** The fix is not flaky.
-
-### 3. Adversarial Testing (2/2 attacks survived)
-
-- **Attack 1:** Boundary value (100% discount) — patch handled it correctly
-- **Attack 2:** Float precision edge (99.9999999%) — no negative results
-
-### 4. Full Suite (7/7 tests passing)
-
-Zero regressions detected. The patch is safe to merge.
-
----
-
-## Risk Assessment
-
-| Factor | Rating |
-|---|---|
-| Fix correctness | High |
-| Stability | High (5/5) |
-| Regression risk | Low |
-| Adversarial resilience | High (2/2 survived) |
-| Estimated cost | $0.025 |
-| Total wall time | 41.4 seconds |
+- **Search phase (4 branches):** Branch 2 (\`ValueError\` guard, Super 120B) passed all target assertions; the remaining 3 candidate strategies failed test validation.
+- **Stability verification (5/5 forks):** The winning branch was re-executed 5 times in independent Contree sandbox forks. All 5 passed.
+- **Adversarial testing (2/2 survived):** Survived both boundary value (100% discount) and float precision (99.9999999%) probes.
+- **Full suite (7/7 passing):** Zero regressions detected across the repository test suite.
 
 ## Recommendation
 
-**Merge with High Confidence.** The ValueError guard is the idiomatic Python approach — fails fast, communicates intent clearly. All evidence confirms correctness. No further review required beyond standard code review of the one-line addition.`,
+**Merge recommended.** The \`ValueError\` guard is the idiomatic Python fix — it fails fast and preserves existing caller contracts.`,
 };
 
 export const mockData = { run, nodes };

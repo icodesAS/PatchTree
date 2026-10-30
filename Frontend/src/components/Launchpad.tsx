@@ -1,195 +1,238 @@
-import { useState, type MouseEvent, type FormEvent } from 'react';
-import { GitBranch, ArrowRight, Cpu, ShieldCheck, Layers, Sparkles } from 'lucide-react';
-import PipelinePreviewModal from './PipelinePreviewModal';
+import { useState, useEffect, type FormEvent } from 'react';
+import { GitBranch, ChevronRight } from 'lucide-react';
+import type { Run } from '../types';
+import { listRuns } from '../api';
+import { mockData } from '../mockData';
+import TierTag from './TierTag';
+import { PRESETS, type PresetDef } from '../presets';
 
-export interface PresetDef {
-  id: string;
-  tone: 'search' | 'stability' | 'ultra';
-  title: string;
-  desc: string;
-  meta: string[];
-  kids: number;
-  repo: string;
-  bugDesc: string;
-  testCmd: string;
-  fullSuiteCmd?: string;
-}
 
-const PRESETS: PresetDef[] = [
+const HOW_STEPS = [
   {
-    id: 'discount',
-    tone: 'search',
-    title: 'Discount bug',
-    desc: 'A price goes negative when discount exceeds 100%. Direct minimal fix on single file.',
-    meta: ['Nano 30B', 'Single-File Fix', '~$0.004'],
-    kids: 4,
-    repo: 'https://github.com/example/discount-calc',
-    bugDesc: 'Discount percentage exceeds 100% causing negative final total calculation.',
-    testCmd: 'pytest tests/test_discount.py',
-    fullSuiteCmd: undefined,
+    num: 1,
+    title: 'Reproduce',
+    detail: 'Runs the failing test in a clean cloud VM.',
   },
   {
-    id: 'flaky',
-    tone: 'stability',
-    title: 'Flaky test isolation',
-    desc: 'Timer race condition passes intermittently. 5 stability forks isolate and quarantine flaky failure.',
-    meta: ['Super 120B', '5 Forks (4/5)', '~$0.01'],
-    kids: 5,
-    repo: 'https://github.com/example/async-scheduler',
-    bugDesc: 'Race condition in timer cancellation causing intermittent assertion errors.',
-    testCmd: 'pytest tests/test_timer.py',
-    fullSuiteCmd: undefined,
+    num: 2,
+    title: 'Search',
+    detail: 'Four models propose fixes at the same time.',
   },
   {
-    id: 'multifile',
-    tone: 'ultra',
-    title: 'Hard bug · Ultra 550B',
-    desc: 'Small models fail round 1. Pipeline escalates to Nemotron-3-Ultra 550B with full regression suite.',
-    meta: ['Ultra 550B', 'Escalation', '~$0.05'],
-    kids: 3,
-    repo: 'https://github.com/example/auth-pipeline',
-    bugDesc: 'Multi-layer token verification failure across session middleware and JWT validator.',
-    testCmd: 'pytest tests/test_auth.py',
-    fullSuiteCmd: 'pytest',
+    num: 3,
+    title: 'Stability',
+    detail: 'Runs each passing fix 5 times to catch flaky results.',
+  },
+  {
+    num: 4,
+    title: 'Adversarial',
+    detail: 'Tries to break the patch before you merge it.',
   },
 ];
 
-function MiniTree({ kids }: { kids: number }) {
-  const xs = Array.from({ length: kids }, (_, i) => 20 + (i * 160) / (kids - 1 || 1));
+interface Props {
+  onCustomRepo: (repoUrl: string) => void;
+  onConfigurePreset: (preset: PresetDef) => void;
+  onSelectRun: (runId: string) => void;
+  onOpenHistory: () => void;
+}
+
+function formatOwnerRepo(url?: string): string {
+  if (!url) return 'example/pricing-service';
   return (
-    <svg className="preset__tree" viewBox="0 0 200 64" preserveAspectRatio="xMidYMid meet" aria-hidden>
-      {xs.map((x, i) => (
-        <path key={i} className="preset__edge" d={`M100 12 C100 34 ${x} 28 ${x} 50`} />
-      ))}
-      <circle cx="100" cy="12" r="4" fill="var(--c-root)" />
-      {xs.map((x, i) => (
-        <circle key={i} cx={x} cy="50" r="3.5" fill="var(--c)" />
-      ))}
-    </svg>
+    url
+      .replace(/^https?:\/\/(www\.)?github\.com\//i, '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/\.git$/, '')
+      .replace(/\/$/, '') || 'repository'
   );
 }
 
-interface Props {
-  onCustomRepo: (repoUrl: string) => void;
-  onSimulatePreset: (preset: PresetDef) => void;
-  onConfigurePreset: (preset: PresetDef) => void;
-}
-
-export default function Launchpad({ onCustomRepo, onSimulatePreset, onConfigurePreset }: Props) {
+export default function Launchpad({
+  onCustomRepo,
+  onConfigurePreset,
+  onSelectRun,
+  onOpenHistory,
+}: Props) {
   const [repo, setRepo] = useState('');
-  const [previewPreset, setPreviewPreset] = useState<PresetDef | null>(null);
+  const [recentRuns, setRecentRuns] = useState<Run[]>([mockData.run]);
 
-  const spot = (e: MouseEvent<HTMLButtonElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`);
-    e.currentTarget.style.setProperty('--my', `${e.clientY - r.top}px`);
-  };
+  useEffect(() => {
+    let active = true;
+    listRuns()
+      .then((fetched) => {
+        if (!active) return;
+        const sorted = [...fetched].sort((a, b) => {
+          const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return db - da;
+        });
+        const withoutMock = sorted.filter((r) => r.run_id !== mockData.run.run_id);
+        setRecentRuns([mockData.run, ...withoutMock].slice(0, 6));
+      })
+      .catch(() => {
+        if (active) setRecentRuns([mockData.run]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (repo.trim()) {
-      onCustomRepo(repo.trim());
-    }
+    onCustomRepo(repo.trim());
   };
 
   return (
-    <section className="launchpad">
-      <div className="launchpad__inner">
-        <div className="launchpad__hero">
-          <div className="launchpad__brand-pill">
-            <span className="launchpad__brand-logo">
-              <GitBranch size={14} />
-            </span>
-            <span className="launchpad__brand-label">PatchTree</span>
-            <span className="launchpad__brand-sep">·</span>
-            <span className="launchpad__brand-tag">Nebius Nemotron × Contree MicroVMs</span>
-          </div>
+    <section className="home-workspace">
+      <div className="home-workspace__grid">
+        <div className="home-workspace__main">
+          <header className="home-header">
+            <h1 className="home-header__title">New run</h1>
+            <p className="home-header__subtitle">
+              Reproduce a bug, try four fixes in parallel, and check the best patch before you merge.
+            </p>
+          </header>
 
-          <h1 className="launchpad__title">
-            Autonomous bug repair,{' '}
-            <span className="launchpad__title-accent">verified in parallel sandboxes.</span>
-          </h1>
-          <p className="launchpad__sub">
-            Fork isolated cloud microVMs, race 4 concurrent Nemotron repair strategies, and prove patch stability with{' '}
-            <code>k=5</code> flaky-test forensics and adversarial attacks before merge.
-          </p>
-        </div>
-
-        <form className="launchpad__cmd" onSubmit={handleSubmit}>
-          <span className="launchpad__prompt">$</span>
-          <input
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-            placeholder="github.com/owner/repository"
-            aria-label="GitHub repository URL"
-          />
-          <button type="submit" className="launchpad__submit">
-            <span>Configure Run</span>
-            <ArrowRight size={13} />
-          </button>
-        </form>
-
-        <div className="launchpad__stages" aria-label="Verification architecture stages">
-          <div className="launchpad__stage-pill" data-stage="root">
-            <Layers size={13} className="launchpad__stage-ico" />
-            <span><b>01</b> Reproduce in Contree VM</span>
-          </div>
-          <div className="launchpad__stage-pill" data-stage="search">
-            <Cpu size={13} className="launchpad__stage-ico" />
-            <span><b>02</b> 4× Parallel Nemotron Search</span>
-          </div>
-          <div className="launchpad__stage-pill" data-stage="stability">
-            <ShieldCheck size={13} className="launchpad__stage-ico" />
-            <span><b>03</b> 5× Stability Forensics</span>
-          </div>
-          <div className="launchpad__stage-pill" data-stage="ultra">
-            <Sparkles size={13} className="launchpad__stage-ico" />
-            <span><b>04</b> Adversarial &amp; Ultra Audit</span>
-          </div>
-        </div>
-
-        <div className="preset-grid">
-          {PRESETS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className="preset"
-              data-tone={p.tone}
-              onMouseMove={spot}
-              onClick={() => setPreviewPreset(p)}
-            >
-              <MiniTree kids={p.kids} />
-              <h3 className="preset__title">{p.title}</h3>
-              <p className="preset__desc">{p.desc}</p>
-              <div className="preset__meta">
-                {p.meta.map((m) => (
-                  <span key={m}>{m}</span>
-                ))}
-              </div>
-              <span className="preset__go">
-                <GitBranch size={13} />
-                <span>Inspect Architecture &amp; Flow</span>
-                <ArrowRight size={13} />
-              </span>
+          <form className="command-bar" onSubmit={handleSubmit}>
+            <div className="command-bar__input-wrap">
+              <GitBranch size={16} strokeWidth={1.5} className="command-bar__icon" aria-hidden="true" />
+              <input
+                type="text"
+                className="command-bar__input"
+                value={repo}
+                onChange={(e) => setRepo(e.target.value)}
+                placeholder="github.com/owner/repository"
+                aria-label="GitHub repository URL"
+              />
+              {repo.trim().length > 0 && (
+                <kbd className="command-bar__kbd" aria-hidden="true">
+                  ⏎
+                </kbd>
+              )}
+            </div>
+            <button type="submit" className="btn btn--primary command-bar__btn">
+              Configure run
             </button>
-          ))}
-        </div>
-      </div>
+          </form>
 
-      {previewPreset && (
-        <PipelinePreviewModal
-          preset={previewPreset}
-          onClose={() => setPreviewPreset(null)}
-          onSimulate={(p) => {
-            setPreviewPreset(null);
-            onSimulatePreset(p);
-          }}
-          onConfigureCloudRun={(p) => {
-            setPreviewPreset(null);
-            onConfigurePreset(p);
-          }}
-        />
-      )}
+          <section className="how-section" aria-labelledby="how-heading">
+            <h2 id="how-heading" className="section-title">
+              How a run works
+            </h2>
+            <div className="how-steps">
+              {HOW_STEPS.map((s) => (
+                <div key={s.num} className="how-step">
+                  <div className="how-step__marker-row">
+                    <span className="how-step__circle num">{s.num}</span>
+                  </div>
+                  <div className="how-step__content">
+                    <div className="how-step__title">{s.title}</div>
+                    <p className="how-step__detail">{s.detail}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="examples-section" aria-labelledby="examples-heading">
+            <div className="section-header-row">
+              <h2 id="examples-heading" className="section-title">
+                Examples
+              </h2>
+              <span className="section-hint">Load one to fill in the form</span>
+            </div>
+
+            <div className="examples-list" role="list">
+              {PRESETS.map((p) => (
+                <div
+                  key={p.id}
+                  role="listitem"
+                  tabIndex={0}
+                  className="examples-row"
+                  onClick={() => onConfigurePreset(p)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onConfigurePreset(p);
+                    }
+                  }}
+                >
+                  <span className="examples-row__name">{p.title}</span>
+                  <span className="examples-row__desc">{p.desc}</span>
+                  <span className="examples-row__tier">
+                    <TierTag tier={p.tier} />
+                  </span>
+                  <span className="examples-row__cost mono num">{p.cost}</span>
+                  <span className="examples-row__action">
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm examples-row__btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onConfigurePreset(p);
+                      }}
+                    >
+                      <span>Load</span>
+                      <ChevronRight size={13} strokeWidth={1.5} className="examples-row__chevron" />
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <aside className="home-workspace__sidebar" aria-labelledby="recent-runs-heading">
+          <div className="section-header-row">
+            <h2 id="recent-runs-heading" className="section-title">
+              Recent runs
+            </h2>
+            <button type="button" className="btn btn--ghost btn--xs" onClick={onOpenHistory}>
+              View all
+            </button>
+          </div>
+
+          {recentRuns.length === 0 ? (
+            <div className="recent-empty">
+              <p className="recent-empty__title">No runs yet.</p>
+              <p className="recent-empty__sub">Load an example to see a full run.</p>
+            </div>
+          ) : (
+            <div className="recent-list" role="list">
+              {recentRuns.map((r) => {
+                const statusTone =
+                  r.status === 'complete' ? 'pass' : r.status === 'failed' ? 'fail' : 'running';
+                const costStr = `$${(r.total_cost_usd ?? 0).toFixed(4)}`;
+                const timeStr = `${(r.total_wall_time_seconds ?? 0).toFixed(1)}s`;
+                const confNum =
+                  r.confidence_score != null
+                    ? Math.round(r.confidence_score <= 1 ? r.confidence_score * 100 : r.confidence_score)
+                    : null;
+
+                return (
+                  <button
+                    key={r.run_id}
+                    type="button"
+                    className="recent-row"
+                    onClick={() => onSelectRun(r.run_id)}
+                  >
+                    <div className="recent-row__top">
+                      <span className="status-dot" data-status={statusTone} />
+                      <span className="recent-row__repo">{formatOwnerRepo(r.repo_url)}</span>
+                    </div>
+                    <div className="recent-row__meta mono num">
+                      <span>{costStr}</span>
+                      <span>{timeStr}</span>
+                      {confNum != null && <span>{confNum}% stable</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </aside>
+      </div>
     </section>
   );
 }

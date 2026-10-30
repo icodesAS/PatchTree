@@ -1,119 +1,150 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Check } from 'lucide-react';
 import type { PatchNode } from '../types';
-
-const tierOf = (model = '') =>
-  /ultra|550/i.test(model) ? 'ultra' : /super|120/i.test(model) ? 'super' : /nano|30/i.test(model) ? 'nano' : 'sandbox';
-
-const chipText = (tier: string) =>
-  tier === 'sandbox' ? 'Sandbox · pytest' : tier === 'ultra' ? 'Ultra 550B' : tier === 'super' ? 'Super 120B' : 'Nano 30B';
+import TierTag from './TierTag';
+import { getModelTier } from '../tier';
 
 const JOB_LABELS: Record<string, string> = {
-  generate_patch_minimal: 'Strategy 1 · Minimal surgical fix',
-  generate_patch_alternative: 'Strategy 2 · Defensive guard path',
-  generate_patch_root_cause: 'Strategy 3 · Upstream root-cause fix',
-  generate_patch_test_driven: 'Strategy 4 · Test-contract compliance',
+  generate_patch_minimal: 'Minimal surgical fix',
+  generate_patch_alternative: 'Defensive guard path',
+  generate_patch_root_cause: 'Upstream root-cause fix',
+  generate_patch_test_driven: 'Test-contract compliance',
 };
 
-function formatCardHypothesis(node: PatchNode, isRunning: boolean): string {
+function formatRow2(node: PatchNode, isRunning: boolean, stabRunNum?: number): string {
+  if (node.branch_type === 'root') {
+    return node.test_command || 'pytest';
+  }
+  if (node.branch_type === 'stability') {
+    const raw = (node.hypothesis || '').trim();
+    if (/^Run\s+\d+\s+of\s+\d+/i.test(raw)) return raw;
+    const total = node.stability_runs || 5;
+    const num = stabRunNum ?? node.stability_passes ?? 1;
+    return `Run ${num} of ${total}`;
+  }
+
   const raw = (node.hypothesis || '').trim();
   if (!raw) {
-    if (isRunning) return 'Thinking & evaluating in sandbox…';
-    if (node.branch_type === 'root') return `Reproduce: ${node.test_command || 'pytest'}`;
-    if (node.branch_type === 'stability') return `Stability re-run: ${node.test_command || 'pytest'}`;
-    if (node.branch_type === 'full_suite') return `Full suite: ${node.test_command || 'pytest'}`;
-    return node.test_command || 'Verification checkpoint';
+    if (isRunning) return 'Evaluating candidate patch in sandbox...';
+    if (node.branch_type === 'full_suite') return node.test_command || 'pytest';
+    return node.test_command || 'Verification check';
   }
+
   const jobMatch = raw.match(/^(generate_patch_\w+):\s*(.*)$/s);
   if (jobMatch) {
     const [, job, rest] = jobMatch;
     const baseLabel = JOB_LABELS[job] || job;
-    const fileMatch = (node.patch_diff || rest).match(/(?:\+\+\+\s+b\/|---\s+a\/)([^\s\n]+)/);
     const firstLine = rest.split('\n')[0].trim();
     if (firstLine && !firstLine.startsWith('---') && !firstLine.startsWith('+++') && !firstLine.startsWith('@@')) {
       return firstLine;
     }
-    return fileMatch ? `${baseLabel} (${fileMatch[1]})` : baseLabel;
+    return baseLabel;
   }
+
   const advMatch = raw.match(/^adversarial fork\s*(\d+):\s*(.*)$/i);
   if (advMatch) {
     const [, forkNum, rest] = advMatch;
     const fnMatch = (node.patch_diff || rest).match(/def\s+(test_[a-zA-Z0-9_]+)/);
-    const fnLabel = fnMatch ? fnMatch[1].replace(/_/g, ' ') : 'boundary & invariant probe';
-    return `Adversarial probe ${forkNum} — ${fnLabel}`;
+    const fnLabel = fnMatch ? fnMatch[1].replace(/^test_/, '').replace(/_/g, ' ') : 'boundary check';
+    return `Probe ${forkNum}: ${fnLabel}`;
   }
+
   return raw.split('\n')[0];
 }
 
 export default function PNode({ data, selected }: NodeProps) {
   const node = (data.patchNode as PatchNode) || {};
   const isWinner = Boolean(data.isWinner);
-  const isDimmed = Boolean(data.isDimmed);
-  const index = typeof data.index === 'number' ? data.index : 0;
+  const siblingIndex = typeof data.siblingIndex === 'number' ? data.siblingIndex : undefined;
 
-  const isRunning = node.test_result == null || node.status === 'pending' || node.status === 'running';
+  const isQueued = node.status === 'pending' && node.test_result == null;
+  const isRunning = !isQueued && (node.test_result == null || node.status === 'running');
   const isPass = node.test_result === 'pass';
-  const isError = node.test_result === 'error';
-  const status: 'running' | 'pass' | 'fail' | 'idle' = isRunning ? 'running' : isPass ? 'pass' : 'fail';
 
-  const tier = tierOf(node.model_used || '');
-  const stage = node.branch_type === 'full_suite' ? 'full' : node.branch_type || 'search';
+  const statusKey: 'queued' | 'running' | 'pass' | 'fail' = isQueued
+    ? 'queued'
+    : isRunning
+    ? 'running'
+    : isPass
+    ? 'pass'
+    : 'fail';
 
-  const label = node.branch_type === 'root'
-    ? 'root'
-    : `${node.branch_type || 'branch'}/${(node.node_id || '').slice(0, 4)}`;
+  const statusWord =
+    statusKey === 'queued'
+      ? 'Queued'
+      : statusKey === 'running'
+      ? 'Running'
+      : statusKey === 'pass'
+      ? 'Pass'
+      : 'Fail';
+
+  const modelInfo = getModelTier(node.model_used || '');
+  const nodeName = (data.name as string) || node.branch_type;
+  const row2Text = formatRow2(node, isRunning, typeof siblingIndex === 'number' ? siblingIndex + 1 : undefined);
 
   const totalTokens = (node.tokens_in ?? 0) + (node.tokens_out ?? 0);
   const cost = node.estimated_cost_usd ?? 0;
 
-  const checks = (node.branch_type === 'stability' || node.branch_type === 'search') && node.stability_runs
-    ? Array.from({ length: node.stability_runs }, (_, i) => (i < (node.stability_passes ?? 0) ? 'ok' : 'bad'))
-    : [];
-
-  const displayHyp = formatCardHypothesis(node, isRunning);
+  const isStability = node.branch_type === 'stability';
+  const stabRuns = node.stability_runs || 5;
+  const stabResults = (data.stabResults as string[] | undefined) ?? [];
+  const stabPassedCount = stabResults.slice(0, (siblingIndex ?? 0) + 1).filter((r) => r === 'pass').length;
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       className={`pnode ${selected ? 'is-selected' : ''}`}
-      data-stage={stage}
-      data-status={status}
-      data-tier={tier}
+      data-status={statusKey}
       data-winner={isWinner ? 'true' : undefined}
-      data-dim={isDimmed ? 'true' : undefined}
-      style={{ '--i': index } as React.CSSProperties}
+      aria-label={`${nodeName} (${isWinner ? 'Selected' : statusWord})`}
     >
-      <Handle type="target" position={Position.Top} />
-      {isWinner && <span className="pnode__crown">★ WINNER</span>}
+      <Handle type="target" position={Position.Top} className="pnode__handle" />
 
-      <header className="pnode__head">
-        <span className="pnode__dot" />
-        <span className="pnode__label">{label}</span>
-        <span className="pnode__badge">
-          {status === 'running' ? 'RUNNING' : status === 'pass' ? '✓ PASS' : isError ? '⚠ ERROR' : '✕ FAIL'}
-        </span>
-      </header>
+      <div className="pnode__row1">
+        <div className="pnode__name-wrap">
+          <span className="status-dot" data-status={statusKey} />
+          <span className="pnode__name mono">{nodeName}</span>
+        </div>
 
-      <div className="pnode__body">
-        <span className="pnode__chip">{chipText(tier)}</span>
-        <p className={`pnode__hyp ${status === 'running' ? 'is-streaming' : ''}`}>
-          {displayHyp}
-        </p>
-      </div>
-
-      <footer className="pnode__foot">
-        <span><b>{totalTokens ? totalTokens.toLocaleString() : '—'}</b> tok</span>
-        <span><b>${cost.toFixed(4)}</b></span>
-        {checks.length > 0 && (
-          <span
-            className="pnode__ticks"
-            title={`${checks.filter((c) => c === 'ok').length}/${checks.length} checks passed`}
-          >
-            {checks.map((c, i) => (
-              <i key={i} className={c} />
-            ))}
+        {isWinner ? (
+          <span className="pnode__winner-status">
+            <Check size={14} strokeWidth={1.75} />
+            <span>Selected</span>
+          </span>
+        ) : (
+          <span className="pnode__status" data-status={statusKey}>
+            {statusWord}
           </span>
         )}
-      </footer>
-      <Handle type="source" position={Position.Bottom} />
+      </div>
+
+      <div className="pnode__row2" title={row2Text}>
+        {row2Text}
+      </div>
+
+      <div className="pnode__row3">
+        {isStability ? (
+          <>
+            <span className="pnode__stab-bar" aria-label={`${stabPassedCount} of ${stabRuns} stability runs passed`}>
+              {Array.from({ length: stabRuns }, (_, idx) => {
+                const r = idx <= (siblingIndex ?? 0) ? stabResults[idx] : undefined;
+                const segState = r === 'pass' ? 'pass' : r === 'fail' ? 'fail' : 'pending';
+                return <span key={idx} className="pnode__stab-seg" data-seg={segState} />;
+              })}
+            </span>
+            <span className="pnode__meta mono num">${cost.toFixed(4)}</span>
+          </>
+        ) : (
+          <>
+            {modelInfo.tier !== 'sandbox' && <TierTag tier={modelInfo.tier} />}
+            <span className="pnode__meta mono num">{totalTokens} tok</span>
+            <span className="pnode__meta mono num">${cost.toFixed(4)}</span>
+          </>
+        )}
+      </div>
+
+      <Handle type="source" position={Position.Bottom} className="pnode__handle" />
     </div>
   );
 }

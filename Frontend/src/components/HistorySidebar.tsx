@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { X, RotateCw, History, GitBranch, Clock, DollarSign, Percent, AlertCircle, Loader, User, Globe } from 'lucide-react';
+import { X, RotateCw } from 'lucide-react';
 import type { Run } from '../types';
 import { listRuns } from '../api';
+import { mockData } from '../mockData';
 
 interface Props {
   currentRunId?: string | null;
@@ -11,10 +12,10 @@ interface Props {
 }
 
 export default function HistorySidebar({ currentRunId, clientId, onSelectRun, onClose }: Props) {
-  const [runs, setRuns] = useState<Run[]>([]);
+  const [runs, setRuns] = useState<Run[]>([mockData.run]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'my' | 'all'>('my');
+  const [filter, setFilter] = useState<'all' | 'my'>('all');
 
   const fetchRuns = useCallback(async () => {
     setLoading(true);
@@ -26,10 +27,11 @@ export default function HistorySidebar({ currentRunId, clientId, onSelectRun, on
         const db = b.created_at ? new Date(b.created_at).getTime() : 0;
         return db - da;
       });
-      setRuns(data);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Failed to fetch historic runs';
-      setError(msg);
+      const withoutMock = data.filter((r) => r.run_id !== mockData.run.run_id);
+      setRuns([mockData.run, ...withoutMock]);
+    } catch {
+      setRuns([mockData.run]);
+      setError('Could not reach the backend. Check that it is running and try again.');
     } finally {
       setLoading(false);
     }
@@ -57,150 +59,118 @@ export default function HistorySidebar({ currentRunId, clientId, onSelectRun, on
     return runs;
   }, [runs, filter, clientId]);
 
-  const formatTime = (iso?: string) => {
-    if (!iso) return '';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } catch {
-      return '';
-    }
-  };
-
   return (
     <div className="history-overlay" onClick={onClose}>
-      <aside className="history-sidebar" onClick={(e) => e.stopPropagation()}>
+      <aside className="history-sidebar" aria-label="Run history" onClick={(e) => e.stopPropagation()}>
         <div className="history-sidebar__header">
-          <div className="history-sidebar__title">
-            <History size={18} className="history-sidebar__icon" />
-            <h3>Run History</h3>
-          </div>
+          <h3 className="history-sidebar__title">History</h3>
           <div className="history-sidebar__actions">
             <button
-              className="icon-btn"
+              type="button"
+              className="btn btn--ghost btn--icon"
               onClick={fetchRuns}
+              aria-label="Refresh runs"
               title="Refresh runs"
               disabled={loading}
             >
-              <RotateCw size={14} className={loading ? 'spin' : ''} />
+              <RotateCw size={14} strokeWidth={1.5} className={loading ? 'spin' : ''} />
             </button>
-            <button className="icon-btn" onClick={onClose} title="Close sidebar">
-              <X size={16} />
+            <button
+              type="button"
+              className="btn btn--ghost btn--icon"
+              onClick={onClose}
+              aria-label="Close history"
+              title="Close history"
+            >
+              <X size={16} strokeWidth={1.5} />
             </button>
           </div>
         </div>
 
-        {/* Anonymous Session Scope Filter */}
-        <div className="history-sidebar__tabs">
+        <div className="inspector__tabs" role="tablist">
           <button
             type="button"
-            className={`history-tab ${filter === 'my' ? 'history-tab--active' : ''}`}
-            onClick={() => setFilter('my')}
+            role="tab"
+            aria-selected={filter === 'all'}
+            className={`inspector__tab ${filter === 'all' ? 'is-active' : ''}`}
+            onClick={() => setFilter('all')}
           >
-            <User size={13} />
-            My Session ({myRunsCount})
+            All runs ({runs.length})
           </button>
           <button
             type="button"
-            className={`history-tab ${filter === 'all' ? 'history-tab--active' : ''}`}
-            onClick={() => setFilter('all')}
+            role="tab"
+            aria-selected={filter === 'my'}
+            className={`inspector__tab ${filter === 'my' ? 'is-active' : ''}`}
+            onClick={() => setFilter('my')}
           >
-            <Globe size={13} />
-            Community & Demos ({runs.length})
+            This browser ({myRunsCount})
           </button>
         </div>
 
         <div className="history-sidebar__body">
-          {loading && runs.length === 0 ? (
-            <div className="history-sidebar__state">
-              <Loader size={20} className="spin" />
-              <span>Fetching runs…</span>
+          {error && (
+            <div className="history-error">
+              <p>{error}</p>
+              <button type="button" className="btn btn--secondary btn--sm" onClick={fetchRuns}>
+                Try again
+              </button>
             </div>
-          ) : error ? (
-            <div className="history-sidebar__state history-sidebar__state--error">
-              <AlertCircle size={20} />
-              <span>{error}</span>
-              <button className="btn btn--secondary btn--sm" onClick={fetchRuns}>Retry</button>
-            </div>
-          ) : displayedRuns.length === 0 ? (
-            <div className="history-sidebar__state">
-              <GitBranch size={28} />
-              <p>{filter === 'my' ? 'No runs in this browser session yet.' : 'No backend runs recorded yet.'}</p>
-              {filter === 'my' && runs.length > 0 ? (
-                <button
-                  className="btn btn--secondary btn--sm"
-                  style={{ marginTop: 8 }}
-                  onClick={() => setFilter('all')}
-                >
-                  View All {runs.length} Community Runs
-                </button>
-              ) : (
-                <span className="text-muted" style={{ fontSize: '0.75rem' }}>
-                  Dispatch a verification run via <strong>+ New Run</strong>.
-                </span>
-              )}
+          )}
+
+          {displayedRuns.length === 0 ? (
+            <div className="history-empty">
+              <p className="history-empty__title">No runs yet.</p>
+              <p className="history-empty__sub">Load an example to see a full run.</p>
             </div>
           ) : (
-            <div className="history-list">
+            <div className="history-list" role="list">
               {displayedRuns.map((r: Run) => {
                 const isActive = r.run_id === currentRunId;
-                const score = r.confidence_score != null
-                  ? Math.round(r.confidence_score <= 1 ? r.confidence_score * 100 : r.confidence_score)
-                  : null;
-                const repoShort = (r.repo_url ?? '').split('/').slice(-2).join('/') || 'repo';
-                const isMine = clientId && r.client_id === clientId;
+                const score =
+                  r.confidence_score != null
+                    ? Math.round(r.confidence_score <= 1 ? r.confidence_score * 100 : r.confidence_score)
+                    : null;
+                const repoShort =
+                  (r.repo_url ?? '')
+                    .replace(/^https?:\/\/(www\.)?github\.com\//i, '')
+                    .replace(/\.git$/, '')
+                    .replace(/\/$/, '') || 'repository';
+                const statusTone =
+                  r.status === 'complete' ? 'pass' : r.status === 'failed' ? 'fail' : 'running';
+                const statusWord =
+                  r.status === 'complete' ? 'Complete' : r.status === 'failed' ? 'Failed' : 'Running';
 
                 return (
-                  <div
+                  <button
                     key={r.run_id}
-                    className={`history-card ${isActive ? 'history-card--active' : ''}`}
+                    type="button"
+                    className={`history-row ${isActive ? 'is-active' : ''}`}
                     onClick={() => {
                       onSelectRun(r.run_id);
                       onClose();
                     }}
                   >
-                    <div className="history-card__top">
-                      <div className="flex-row gap-4" style={{ alignItems: 'center' }}>
-                        <span className="history-card__repo" title={r.repo_url}>
-                          {repoShort}
-                        </span>
-                        {isMine && <span className="pnode__badge pnode__badge--pass" style={{ fontSize: '0.58rem', padding: '1px 5px' }}>YOU</span>}
-                      </div>
-                      <span className={`status-pill status-pill--${r.status}`}>
-                        {r.status.toUpperCase()}
+                    <div className="history-row__top">
+                      <span className="history-row__repo" title={r.repo_url}>
+                        {repoShort}
+                      </span>
+                      <span className="history-row__status">
+                        <span className="status-dot" data-status={statusTone} />
+                        <span>{statusWord}</span>
                       </span>
                     </div>
 
-                    <p className="history-card__desc" title={r.bug_description}>
-                      {r.bug_description || 'No description provided'}
+                    <p className="history-row__desc" title={r.bug_description}>
+                      {r.bug_description || 'No description'}
                     </p>
 
-                    <div className="history-card__meta">
-                      {score != null && (
-                        <span className="history-card__stat history-card__stat--score">
-                          <Percent size={11} />
-                          {score}%
-                        </span>
-                      )}
-                      {r.total_wall_time_seconds != null && (
-                        <span className="history-card__stat">
-                          <Clock size={11} />
-                          {r.total_wall_time_seconds.toFixed(1)}s
-                        </span>
-                      )}
-                      {r.total_cost_usd != null && (
-                        <span className="history-card__stat">
-                          <DollarSign size={11} />
-                          ${r.total_cost_usd.toFixed(4)}
-                        </span>
-                      )}
-                      {r.created_at && (
-                        <span className="history-card__stat history-card__stat--time">
-                          {formatTime(r.created_at)}
-                        </span>
-                      )}
+                    <div className="history-row__meta mono num">
+                      <span>${(r.total_cost_usd ?? 0).toFixed(4)}</span>
+                      <span>{(r.total_wall_time_seconds ?? 0).toFixed(1)}s</span>
+                      {score != null && <span>{score}% stable</span>}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
