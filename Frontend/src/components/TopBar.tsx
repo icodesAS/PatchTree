@@ -120,7 +120,7 @@ function PipelineRibbon({ stages, currentStage, state }: { stages: Stage[]; curr
 
 /* ---------- the bar ---------- */
 export default function TopBar({
-  backendOnline, loading, run, elapsed, stages, currentStage, hasNodes,
+  backendOnline: _backendOnline, loading, run, elapsed, stages, currentStage, hasNodes,
   onHome, onHistory, onReport, onNewRun,
 }: TopBarProps) {
   const state: RunState =
@@ -140,9 +140,6 @@ export default function TopBar({
       <button className="hud-brand" onClick={onHome} aria-label="PatchTree home">
         <GitBranch size={20} className="hud-brand__mark" />
         <span className="hud-brand__name">PatchTree</span>
-        <span className="hud-conn" data-online={backendOnline}>
-          {backendOnline ? 'Connected' : 'Offline'}
-        </span>
       </button>
 
       {/* repo + test */}

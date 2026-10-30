@@ -98,7 +98,7 @@ async def call_model(job: str, prompt: str, system_prompt: str | None = None, te
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-            max_tokens = 2500 if job == "generate_confidence_report" else 1500
+            max_tokens = 3000
             resp = await client.chat.completions.create(
                 model=model,
                 temperature=temp,

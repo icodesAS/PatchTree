@@ -100,6 +100,27 @@ class SandboxManager:
                 if repo and not any(d in repo.lower() for d in ("example.com", "example/")):
                     logger.info("Cloning repo %s into container /app...", repo)
                     self.run_command(f"git clone --depth 1 {repo} /app")
+                elif repo:
+                    logger.info("Scaffolding demo git repository in /app for %s...", repo)
+                    demo_setup = (
+                        "mkdir -p /app/src /app/tests && cd /app && "
+                        "printf 'def calculate_discount(price: float, discount_pct: float) -> float:\\n"
+                        "    return price * (1 - discount_pct / 100)\\n' > /app/src/pricing.py && "
+                        "printf 'from src.pricing import calculate_discount\\n\\n"
+                        "def test_calculate_discount():\\n"
+                        "    assert calculate_discount(100.0, 20.0) == 80.0\\n"
+                        "    assert calculate_discount(100.0, 0.0) == 100.0\\n"
+                        "    assert calculate_discount(100.0, 150.0) == 0.0\\n' > /app/tests/test_discount.py && "
+                        "printf 'def compute_average(values: list[float]) -> float:\\n"
+                        "    return sum(values) / len(values)\\n' > /app/src/math_service.py && "
+                        "printf 'from src.math_service import compute_average\\n\\n"
+                        "def test_average_empty():\\n"
+                        "    assert compute_average([]) == 0.0\\n"
+                        "    assert compute_average([10.0, 20.0]) == 15.0\\n' > /app/tests/test_math.py && "
+                        "git init -q && git config user.email 'bot@patchtree.ai' && git config user.name 'PatchTree' && "
+                        "git add . && git commit -q -m 'seed demo repo'"
+                    )
+                    self.run_command(demo_setup)
                 return
             except Exception as e:
                 self._fallback(e)

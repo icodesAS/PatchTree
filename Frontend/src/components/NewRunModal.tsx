@@ -4,6 +4,15 @@ import type { RunCreate } from '../types';
 
 const SAMPLES: { label: string; data: RunCreate }[] = [
   {
+    label: '🛒 Checkout Pricing Suite (Live GitHub Bug)',
+    data: {
+      repo_url: 'https://github.com/noshaeec/checkout-pricing-suite',
+      bug_description: 'volume_discount_rate() in src/checkout/pricing.py uses > TIER_2_THRESHOLD instead of >= TIER_2_THRESHOLD so subtotal 1000.00 gets 10% instead of 15%',
+      target_test: 'pytest --runxfail tests/test_discounts.py',
+      full_suite_test: 'pytest --runxfail tests/test_discounts.py tests/test_items.py',
+    },
+  },
+  {
     label: '🐛 Math Service (ZeroDivisionError)',
     data: {
       repo_url: 'https://github.com/example/math-service',

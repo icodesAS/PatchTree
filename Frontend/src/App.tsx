@@ -332,7 +332,7 @@ export default function App() {
   // Determine whether this run includes a full suite command/branch
   const hasFullSuite = Boolean(
     run?.full_suite_test ||
-    run?.full_suite_result ||
+    (run?.full_suite_result && run.full_suite_result !== 'skipped') ||
     patchNodes.some((n) => n.branch_type === 'full_suite')
   );
 

@@ -1,7 +1,42 @@
-import { useState } from 'react';
-import { X, Cpu, DollarSign, Clock, Copy, Check, FileCode, Terminal, Activity } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Cpu, DollarSign, Copy, Check, FileCode, Terminal, Activity } from 'lucide-react';
 import type { PatchNode } from '../types';
 import DiffViewer from './DiffViewer';
+
+const STRATEGY_DESCRIPTIONS: Record<string, string> = {
+  generate_patch_minimal: 'Strategy 1 (Minimal Surgical Fix) — Targets the exact crash site with the smallest localized 1–5 line change.',
+  generate_patch_alternative: 'Strategy 2 (Defensive & Boundary Guard) — Introduces input validation, boundary guards, or state normalization.',
+  generate_patch_root_cause: 'Strategy 3 (Upstream Root-Cause Fix) — Traces data flow backward into producer functions and caller state.',
+  generate_patch_test_driven: 'Strategy 4 (Test-Contract Compliance) — Aligns return values, exception contracts, and edge cases with test assertions.',
+};
+
+function formatInspectorHypothesis(node: PatchNode): string {
+  const raw = (node.hypothesis || '').trim();
+  if (!raw) {
+    if (node.branch_type === 'root') return `Initial bug reproduction checkpoint executing \`${node.test_command || 'pytest'}\` on clean repository state.`;
+    if (node.branch_type === 'stability') return `Determinism verification fork: re-running \`${node.test_command || 'pytest'}\` in an isolated Contree snapshot to rule out flakiness.`;
+    if (node.branch_type === 'full_suite') return `Full regression suite execution (\`${node.test_command || 'pytest'}\`) verifying no collateral breakage.`;
+    return '';
+  }
+  const jobMatch = raw.match(/^(generate_patch_\w+):\s*(.*)$/s);
+  if (jobMatch) {
+    const [, job, rest] = jobMatch;
+    const desc = STRATEGY_DESCRIPTIONS[job] || job;
+    const firstLine = rest.split('\n')[0].trim();
+    if (firstLine && !firstLine.startsWith('---') && !firstLine.startsWith('+++') && !firstLine.startsWith('@@')) {
+      return `${desc}\n\nSummary: ${firstLine}`;
+    }
+    return desc;
+  }
+  const advMatch = raw.match(/^adversarial fork\s*(\d+):\s*(.*)$/i);
+  if (advMatch) {
+    const [, forkNum, rest] = advMatch;
+    const fnMatch = (node.patch_diff || rest).match(/def\s+(test_[a-zA-Z0-9_]+)/);
+    const fnLabel = fnMatch ? `\`${fnMatch[1]}\`` : 'synthesized boundary & edge-case pytest';
+    return `Adversarial red-team fork ${forkNum} — executes ${fnLabel} in an isolated Contree snapshot to stress-test the winning patch.`;
+  }
+  return raw;
+}
 
 const BRANCH_LABELS: Record<string, string> = {
   root: 'Root', search: 'Search', stability: 'Stability',
@@ -71,10 +106,14 @@ interface Props {
 }
 
 export default function NodeInspector({ node, onClose }: Props) {
-  // Default to diff if present, else output
+  // Default to diff if present, else output; sync when user selects a different node
   const [activeTab, setActiveTab] = useState<Tab>(node.patch_diff ? 'diff' : 'output');
+  useEffect(() => {
+    setActiveTab(node.patch_diff ? 'diff' : 'output');
+  }, [node.node_id, node.patch_diff]);
   const color = BRANCH_COLORS[node.branch_type] ?? '#6b7280';
   const modelLabel = MODEL_SHORT[node.model_used] ?? node.model_used;
+  const formattedHyp = formatInspectorHypothesis(node);
 
   return (
     <aside className="inspector">
@@ -144,12 +183,12 @@ export default function NodeInspector({ node, onClose }: Props) {
       <div className="inspector__body">
         {activeTab === 'diff' && (
           <div className="inspector__tab-pane">
-            {node.hypothesis && (
+            {formattedHyp && (
               <div className="inspector__section">
                 <div className="inspector__label">
                   {node.branch_type === 'adversarial' ? 'Adversarial Attack Strategy' : 'Hypothesis & Repair Strategy'}
                 </div>
-                <p className="inspector__text">{node.hypothesis}</p>
+                <p className="inspector__text" style={{ whiteSpace: 'pre-line' }}>{formattedHyp}</p>
               </div>
             )}
             {node.branch_type === 'adversarial' && node.patch_diff ? (
@@ -205,15 +244,14 @@ export default function NodeInspector({ node, onClose }: Props) {
                 </span>
               </div>
               <div className="telemetry-card">
-                <span className="telemetry-card__label">Wall Time</span>
+                <span className="telemetry-card__label">Total Tokens</span>
                 <span className="telemetry-card__val">
-                  <Clock size={12} style={{ display: 'inline', marginRight: 2 }} />
-                  {(node.wall_time_seconds ?? 0).toFixed(2)}s
+                  {((node.tokens_in ?? 0) + (node.tokens_out ?? 0)).toLocaleString()}
                 </span>
               </div>
             </div>
 
-            {node.branch_type === 'stability' && node.stability_runs != null && (
+            {node.stability_runs != null && node.stability_runs > 0 && (
               <div className="inspector__stab" style={{ marginTop: '12px' }}>
                 Stability Forensics: <strong>{node.stability_passes}/{node.stability_runs}</strong> sandbox forks passed
               </div>

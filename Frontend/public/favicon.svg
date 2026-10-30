@@ -1,9 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="14" fill="#0B0F19"/>
-  <rect x="1.5" y="1.5" width="61" height="61" rx="12.5" stroke="#6366F1" stroke-opacity="0.45" stroke-width="3"/>
-  <path d="M22 18V46" stroke="#818CF8" stroke-width="4.5" stroke-linecap="round"/>
-  <path d="M22 25C31 25 42 32 42 42" stroke="#10B981" stroke-width="4.5" stroke-linecap="round"/>
-  <circle cx="22" cy="18" r="5.5" fill="#818CF8"/>
-  <circle cx="22" cy="46" r="5.5" fill="#38BDF8"/>
-  <circle cx="42" cy="44" r="6" fill="#10B981"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <rect width="24" height="24" rx="6" fill="#0B0F19"/>
+  <rect x="0.75" y="0.75" width="22.5" height="22.5" rx="5.25" stroke="#818CF8" stroke-opacity="0.35" stroke-width="1.2"/>
+  <g transform="translate(2.2, 2.2) scale(0.816)" stroke="#818CF8" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <line x1="6" x2="6" y1="3" y2="15"/>
+    <circle cx="18" cy="6" r="3"/>
+    <circle cx="6" cy="18" r="3"/>
+    <path d="M18 9a9 9 0 0 1-9 9"/>
+  </g>
 </svg>

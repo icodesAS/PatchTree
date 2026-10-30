@@ -108,6 +108,44 @@ function ScoreGauge({ score }: { score: number }) {
   );
 }
 
+function normalizeReportMarkdown(md: string): string {
+  const cleaned = md
+    .replace(/\[!(IMPORTANT|NOTE|TIP|WARNING|CAUTION)\]\s*/g, '**$1:** ')
+    .replace(/<br\s*\/?>/gi, ' · ');
+
+  const lines = cleaned.split('\n');
+  const out: string[] = [];
+  let headers: string[] | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      const cells = trimmed.slice(1, -1).split('|').map((c) => c.trim());
+      if (cells.every((c) => /^[-:\s]+$/.test(c))) {
+        continue;
+      }
+      if (!headers && i + 1 < lines.length && /^\|\s*[-:]+/.test(lines[i + 1].trim())) {
+        headers = cells;
+        continue;
+      }
+      if (headers && cells.length > 1) {
+        const primary = cells[0];
+        const details = cells
+          .slice(1)
+          .map((val, idx) => (headers && headers[idx + 1] ? `${headers[idx + 1]}: ${val}` : val))
+          .filter(Boolean)
+          .join(' — ');
+        out.push(`- **${primary}** (${details})`);
+        continue;
+      }
+    } else {
+      headers = null;
+    }
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
+
 export default function ReportModal({ run: initialRun, onClose }: Props) {
   const [run, setRun] = useState<Run>(initialRun);
   const [copiedReport, setCopiedReport] = useState(false);
@@ -279,7 +317,9 @@ ${run.confidence_report || 'No detailed confidence report recorded.'}
           <div className="report-modal__content">
             {run.confidence_report ? (
               <div className="md-report">
-                <ReactMarkdown>{run.confidence_report}</ReactMarkdown>
+                <ReactMarkdown>
+                  {normalizeReportMarkdown(run.confidence_report)}
+                </ReactMarkdown>
               </div>
             ) : (
               <div className="report-modal__empty">

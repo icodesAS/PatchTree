@@ -1,4 +1,5 @@
 import { useState, type MouseEvent, type FormEvent } from 'react';
+import { GitBranch, ArrowRight, Cpu, ShieldCheck, Layers, Sparkles } from 'lucide-react';
 import PipelinePreviewModal from './PipelinePreviewModal';
 
 export interface PresetDef {
@@ -94,10 +95,23 @@ export default function Launchpad({ onCustomRepo, onSimulatePreset, onConfigureP
   return (
     <section className="launchpad">
       <div className="launchpad__inner">
-        <div>
-          <h1 className="launchpad__title">Watch AI models race to fix a bug</h1>
+        <div className="launchpad__hero">
+          <div className="launchpad__brand-pill">
+            <span className="launchpad__brand-logo">
+              <GitBranch size={14} />
+            </span>
+            <span className="launchpad__brand-label">PatchTree</span>
+            <span className="launchpad__brand-sep">·</span>
+            <span className="launchpad__brand-tag">Nebius Nemotron × Contree MicroVMs</span>
+          </div>
+
+          <h1 className="launchpad__title">
+            Autonomous bug repair,{' '}
+            <span className="launchpad__title-accent">verified in parallel sandboxes.</span>
+          </h1>
           <p className="launchpad__sub">
-            Inspect the verification flow of any preset below, or enter a custom repository to launch parallel verification in cloud sandboxes.
+            Fork isolated cloud microVMs, race 4 concurrent Nemotron repair strategies, and prove patch stability with{' '}
+            <code>k=5</code> flaky-test forensics and adversarial attacks before merge.
           </p>
         </div>
 
@@ -107,11 +121,32 @@ export default function Launchpad({ onCustomRepo, onSimulatePreset, onConfigureP
             value={repo}
             onChange={(e) => setRepo(e.target.value)}
             placeholder="github.com/owner/repository"
+            aria-label="GitHub repository URL"
           />
-          <button type="submit" className="launchpad__kbd" style={{ background: 'transparent', cursor: 'pointer' }}>
-            Enter ↵
+          <button type="submit" className="launchpad__submit">
+            <span>Configure Run</span>
+            <ArrowRight size={13} />
           </button>
         </form>
+
+        <div className="launchpad__stages" aria-label="Verification architecture stages">
+          <div className="launchpad__stage-pill" data-stage="root">
+            <Layers size={13} className="launchpad__stage-ico" />
+            <span><b>01</b> Reproduce in Contree VM</span>
+          </div>
+          <div className="launchpad__stage-pill" data-stage="search">
+            <Cpu size={13} className="launchpad__stage-ico" />
+            <span><b>02</b> 4× Parallel Nemotron Search</span>
+          </div>
+          <div className="launchpad__stage-pill" data-stage="stability">
+            <ShieldCheck size={13} className="launchpad__stage-ico" />
+            <span><b>03</b> 5× Stability Forensics</span>
+          </div>
+          <div className="launchpad__stage-pill" data-stage="ultra">
+            <Sparkles size={13} className="launchpad__stage-ico" />
+            <span><b>04</b> Adversarial &amp; Ultra Audit</span>
+          </div>
+        </div>
 
         <div className="preset-grid">
           {PRESETS.map((p) => (
@@ -131,7 +166,11 @@ export default function Launchpad({ onCustomRepo, onSimulatePreset, onConfigureP
                   <span key={m}>{m}</span>
                 ))}
               </div>
-              <span className="preset__go">🔍 View Architecture & Flow</span>
+              <span className="preset__go">
+                <GitBranch size={13} />
+                <span>Inspect Architecture &amp; Flow</span>
+                <ArrowRight size={13} />
+              </span>
             </button>
           ))}
         </div>

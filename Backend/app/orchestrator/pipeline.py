@@ -363,11 +363,17 @@ async def ultra_synthesize_patch(
         f"pytest failure trace:\n{node.test_output or ''}"
         for i, node in enumerate(failed_branches)
     )
+    trace_for_context = "\n".join(
+        part for part in (
+            parent_node.test_output or "",
+            failed_branches[0].test_output if failed_branches else "",
+        ) if part
+    )
     source_context = await asyncio.to_thread(
         extract_relevant_source_context,
         sandbox,
         parent_node.test_command or run.target_test,
-        failed_branches[0].test_output if failed_branches else "",
+        trace_for_context,
         run.bug_description,
         4500,
         "wide",
@@ -431,18 +437,28 @@ async def ultra_synthesize_patch(
 
 def extract_diff(content: str) -> str:
     """Extract unified diff from model response, stripping markdown fences if present."""
-    match = re.search(r"```(?:diff|patch)?\s*\n([\s\S]*?)\n```", content)
-    if match:
-        return match.group(1).strip()
-    return content.strip()
+    blocks = re.findall(r"```(?:diff|patch|[a-zA-Z0-9_-]*)\s*\n([\s\S]*?)\n```", content or "")
+    for block in blocks:
+        if "--- " in block and "+++ " in block:
+            return block.strip()
+    if blocks:
+        return blocks[0].strip()
+    raw = (content or "").strip()
+    idx = raw.find("--- a/")
+    if idx != -1:
+        return raw[idx:].strip()
+    return raw
 
 
 def extract_code(content: str) -> str:
     """Extract a python code block from a model response, stripping markdown fences."""
-    match = re.search(r"```(?:python|py)?\s*\n([\s\S]*?)\n```", content)
-    if match:
-        return match.group(1).strip()
-    return content.strip()
+    blocks = re.findall(r"```(?:python|py)?\s*\n([\s\S]*?)\n```", content or "")
+    for block in blocks:
+        if "def test_" in block:
+            return block.strip()
+    if blocks:
+        return blocks[0].strip()
+    return (content or "").strip()
 
 
 def extract_file_locations_from_trace(test_command: str, test_output: str) -> dict[str, list[int]]:
@@ -549,8 +565,13 @@ def extract_relevant_source_context(
     if not sandbox.stub:
         try:
             esc_trace = base64.b64encode(test_output.encode("utf-8")).decode("ascii")
-            sandbox.run_command(f"echo '{esc_trace}' | base64 -d > /tmp/failure_trace.txt 2>/dev/null || true")
-            cmd = f"python3 /usr/local/bin/context_engine.py --repo /app --budget {budget_tokens} --profile {profile} < /tmp/failure_trace.txt"
+            esc_hint = base64.b64encode((bug_description or "").encode("utf-8")).decode("ascii")
+            cmd = (
+                f"echo '{esc_trace}' | base64 -d > /tmp/failure_trace.txt 2>/dev/null; "
+                f"echo '{esc_hint}' | base64 -d > /tmp/bug_hint.txt 2>/dev/null; "
+                f"python3 /usr/local/bin/context_engine.py --repo /app --budget {budget_tokens} "
+                f"--profile {profile} --hint-file /tmp/bug_hint.txt < /tmp/failure_trace.txt"
+            )
             res = sandbox.run_command(cmd)
             if res.exit_code == 0 and res.output.strip():
                 try:
@@ -654,7 +675,15 @@ async def _execute_branch(
     # Extract patch from response (clean markdown fences if model wrapped the diff)
     raw_content = model_response.get("content", "")
     patch_diff = extract_diff(raw_content) or raw_content
-    hypothesis = f"{job}: {patch_diff[:100]}..."
+    strategy_labels = {
+        "generate_patch_minimal": "Minimal surgical fix",
+        "generate_patch_alternative": "Defensive & boundary guard path",
+        "generate_patch_root_cause": "Upstream root-cause fix",
+        "generate_patch_test_driven": "Test-contract compliance fix",
+    }
+    file_match = re.search(r"(?:\+\+\+\s+b/|---\s+a/)([^\s\n]+)", patch_diff)
+    target_file = file_match.group(1) if file_match else "target module"
+    hypothesis = f"{job}: {strategy_labels.get(job, job)} in {target_file}"
 
     def _apply_and_verify() -> tuple[Literal["pass", "fail", "error"], str, str]:
         fork = parent_sandbox.fork(parent_node.checkpoint_id)
@@ -852,6 +881,8 @@ async def check_adversarial(
 
         result, checkpoint_id = await asyncio.to_thread(_exec)
         cost = calculate_token_cost(response["model"], response["tokens_in"], response["tokens_out"])
+        fn_match = re.search(r"def\s+(test_[a-zA-Z0-9_]+)\s*\(", test_code or "")
+        fn_label = fn_match.group(1) if fn_match else (test_code.splitlines()[0] if test_code else "empty")
         return Node(
             node_id=str(uuid.uuid4()),
             run_id=run.run_id,
@@ -859,7 +890,7 @@ async def check_adversarial(
             branch_type="adversarial",
             checkpoint_id=checkpoint_id,
             patch_diff=test_code,
-            hypothesis=f"adversarial fork {index + 1}: {test_code.splitlines()[0] if test_code else 'empty'}",
+            hypothesis=f"adversarial fork {index + 1}: {fn_label}",
             test_command=test_command,
             test_result="pass" if result.exit_code == 0 else "fail",
             test_output=result.output,
@@ -999,8 +1030,7 @@ async def _run_pipeline_impl(
             f"**Reason:**\n{msg}\n\n"
             f"- **Repository:** `{run.repo_url}`\n"
             f"- **Target Test:** `{run.target_test}`\n\n"
-            f"> [!IMPORTANT]\n"
-            f"> Search fan-out was halted early to protect against unnecessary LLM and compute costs."
+            f"> **Important:** Search fan-out was halted early to protect against unnecessary LLM and compute costs."
         )
         run.completed_at = datetime.now(timezone.utc)
         if run.created_at:
