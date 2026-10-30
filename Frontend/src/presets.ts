@@ -39,11 +39,11 @@ export const PRESETS: PresetDef[] = [
     id: 'drivelegal',
     testRunner: 'pytest',
     title: 'drivelegal',
-    desc: 'Bearer JWT token authentication claim lookup mismatch',
+    desc: 'Case-insensitive city query filter in /api/calculate',
     cost: '$0.012',
     repo: 'https://github.com/GHOST4709/drivelegal',
     bugDesc:
-      'Current user authentication endpoint fails to resolve user profile from Bearer token claims',
+      'calculate_fine in Backend/main.py returns 404 when querying /api/calculate with mixed-case city parameters like dHaKa instead of matching records case-insensitively',
     testCmd: 'pytest Backend/test.py',
     fullSuiteCmd: 'pytest Backend/test.py',
   },

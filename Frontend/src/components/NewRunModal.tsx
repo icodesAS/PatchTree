@@ -28,11 +28,11 @@ const EXAMPLES: { id: string; label: string; data: RunCreate }[] = [
   },
   {
     id: 'drivelegal',
-    label: 'GHOST4709/drivelegal (JWT Bearer token lookup mismatch)',
+    label: 'GHOST4709/drivelegal (Case-insensitive city query filter)',
     data: {
       repo_url: 'https://github.com/GHOST4709/drivelegal',
       bug_description:
-        'Current user authentication endpoint fails to resolve user profile from Bearer token claims',
+        'calculate_fine in Backend/main.py returns 404 when querying /api/calculate with mixed-case city parameters like dHaKa instead of matching records case-insensitively',
       target_test: 'pytest Backend/test.py',
       full_suite_test: 'pytest Backend/test.py',
     },
@@ -96,13 +96,13 @@ export default function NewRunModal({ onSubmit, onClose, backendOnline, initialV
   const bugError = touched.bug && !form.bug_description.trim()
     ? 'Add a short description so the models know what to fix.'
     : form.bug_description.length > 2000
-    ? 'Description exceeds maximum length of 2000 characters.'
-    : null;
+      ? 'Description exceeds maximum length of 2000 characters.'
+      : null;
   const testError = touched.test && !form.target_test.trim()
     ? 'Add the command that fails.'
     : form.target_test.length > 2000
-    ? 'Command exceeds maximum length of 2000 characters.'
-    : null;
+      ? 'Command exceeds maximum length of 2000 characters.'
+      : null;
 
   const isValid =
     repoCheck.valid &&

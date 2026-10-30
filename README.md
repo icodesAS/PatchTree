@@ -2,23 +2,28 @@
 
 # PatchTree
 
-**Speculative Sandbox Forking & Multi-Stage Verification Engine for Autonomous Code Repair**
+**Autonomous Code Verification & Speculative Repair Engine for Python Codebases**
+
+*CI/CD-Adjacent Speculative Verification Agent with Multi-Stage Sandbox Forking*
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MPL--2.0-blue?style=flat-square" alt="License: MPL-2.0" /></a>
-  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+" />
+  <img src="https://img.shields.io/badge/python-3.10--3.13%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10-3.13+" />
   <img src="https://img.shields.io/badge/backend-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
-  <img src="https://img.shields.io/badge/frontend-React_19_%2B_TypeScript-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19" />
+  <img src="https://img.shields.io/badge/frontend-React_19_%2B_TypeScript-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19 + Vite" />
   <img src="https://img.shields.io/badge/models-NVIDIA_Nemotron_3-76B900?style=flat-square&logo=nvidia&logoColor=white" alt="NVIDIA Nemotron 3" />
-  <img src="https://img.shields.io/badge/runtime-Nebius_Token_Factory_%2B_Contree-0EA5E9?style=flat-square" alt="Nebius Token Factory" />
+  <img src="https://img.shields.io/badge/inference-Nebius_Token_Factory-0EA5E9?style=flat-square" alt="Nebius Token Factory" />
+  <img src="https://img.shields.io/badge/sandboxes-Nebius_Contree-0EA5E9?style=flat-square" alt="Contree Cloud Sandboxes" />
 </p>
 
 <p align="center">
-  <a href="#overview">Overview</a> ·
+  <a href="#executive-summary">Executive Summary</a> ·
+  <a href="#the-core-problem-vs-the-patchtree-solution">Problem & Solution</a> ·
   <a href="#architecture--verification-pipeline">Architecture</a> ·
-  <a href="#nvidia-nemotron--nebius-token-factory-integration">Nemotron & Nebius Integration</a> ·
-  <a href="#getting-started">Getting Started</a> ·
-  <a href="#roadmap">Roadmap</a> ·
+  <a href="#interactive-mission-control-ui">Mission Control UI</a> ·
+  <a href="#curated-benchmark-scenarios">Benchmark Scenarios</a> ·
+  <a href="#quickstart-for-judges--developers">Quickstart</a> ·
+  <a href="#tech-stack--cloud-infrastructure">Tech Stack</a> ·
   <a href="./LICENSE">License</a>
 </p>
 
@@ -32,27 +37,62 @@
 
 ---
 
-## Overview
+## Executive Summary
 
-Standard autonomous coding agents operate in a linear, single-threaded loop: read a stack trace, generate a single candidate diff, run the target test once, and return the result. In production codebases, this approach fails in four predictable ways:
+**PatchTree** is an autonomous verification and speculative repair tool purpose-built for **Python codebases** (Python 3.10–3.13+). It functions as a **CI/CD-adjacent speculative verification agent** that developers and automated systems can trigger via API or Web UI to safely isolate, reproduce, and repair regressions in isolated cloud sandboxes.
 
-1. **Single-hypothesis lock-in:** A localized symptom patch fails when the defect originates in an upstream caller or data producer.
-2. **Reward hacking:** Models frequently pass a failing test suite by weakening, deleting, or bypassing `assert` statements inside the test file rather than fixing the implementation.
-3. **Flaky false positives:** Race conditions, async timing jitter, or shared state allow defective patches to pass a single test execution by chance.
-4. **Overfitted patches:** A candidate fix can satisfy the named test case while failing on boundary inputs (`0`, `None`, negative values, empty collections) or introducing regressions elsewhere in the repository.
+Built for native Python tooling first, PatchTree supports:
+- **Test Frameworks:** `pytest`, `unittest`
+- **Package Manifests:** `requirements.txt`, `pyproject.toml`, `setup.py`
+- **Execution Environment:** Copy-on-write Linux microVMs on **Nebius Contree**
+- **Inference Engine:** Tiered LLM ensemble using **NVIDIA Nemotron 3 Family** (Nano 30B, Super 120B, Ultra 550B) via **Nebius Token Factory**
 
-**PatchTree** replaces single-shot patching with **speculative execution over copy-on-write cloud sandboxes**. Given a repository URL, bug description, and test command, PatchTree boots a base microVM on **Nebius Contree**, reproduces the failure, snapshots the container filesystem, and fans out an execution tree of **13+ isolated microVM nodes** driven by the **NVIDIA Nemotron 3** model family on **Nebius Token Factory**.
+Rather than operating as a general-purpose coding assistant, PatchTree is architected as an **engineering tool**: a production-grade verification pipeline designed to augment existing CI/CD workflows with speculative tree exploration, adversarial boundary testing, and stability forensics across 13+ isolated sandbox forks.
+
+---
+
+## The Core Problem vs. The PatchTree Solution
+
+### How Standard AI Coding Agents Fail
+
+Single-shot coding agents (sweepers, copilots, linear repair loops) operate in a guess-and-check paradigm that breaks down predictably in production codebases:
+
+1. **Single-Hypothesis Trap:** Agents lock into localized syntax edits at the crash site rather than tracing architectural root causes upstream through caller chains or data producers.
+
+2. **Reward-Hacking & Test Corruption:** Models frequently achieve "green" test suites by modifying or deleting `assert` statements inside `test_*.py` files rather than fixing the actual implementation—a form of specification gaming that silently erodes test integrity.
+
+3. **Flaky False-Positives:** Assuming that a single passing test execution means the code is deterministically fixed. Race conditions, async timing jitter, memory state leaks, or uninitialized variables can produce transient passes that mask underlying defects.
+
+4. **Blind Patch Application:** Agents apply diffs without verifying line endings, import side effects, or full-suite regression boundaries, introducing breaking changes to unrelated modules.
+
+### How PatchTree Fundamentally Solves This
+
+**PatchTree** replaces single-shot patching with **speculative tree exploration over real copy-on-write microVM sandboxes**. Given a repository URL, bug description, and test command, PatchTree:
+
+1. Boots a base `python:3.11` microVM on **Nebius Contree** (isolated copy-on-write Linux sandbox)
+2. Reproduces the failure with zero-LLM checkpoint-based validation
+3. Snapshots the container filesystem with **git-level checkpoint isolation**
+4. Executes **in-sandbox AST Context Slicing** (`context_engine.py`) with line-level call graph resolution
+5. Fans out an execution tree of **13+ isolated microVM nodes** powered by a tiered **NVIDIA Nemotron 3** ensemble (Nano 30B, Super 120B, Ultra 550B) via **Nebius Token Factory**
+6. Enforces strict **anti-test-tampering guardrails** (code modifications restricted to non-test source files)
+7. Validates stability via **5-fork parallel forensics** (5/5 clean passes required)
+8. Hardens boundaries with **2-fork adversarial red-teaming** (synthesizing attack test suites)
+9. Escalates to **Nemotron 3 Ultra (550B)** when lightweight models fail, analyzing all prior failed diffs and tracebacks
+
+This approach transforms unreliable guess-and-check into deterministic, auditable verification.
+
+### Core Comparative Matrix: Single-Shot Agents vs. PatchTree
 
 | Capability | Single-Shot Coding Agents | PatchTree |
 |---|---|---|
-| **Hypothesis Exploration** | Sequential, single-strategy retries | **4-Branch Concurrent Search** across distinct repair strategies |
-| **Source Context** | Raw file dumps or ungrounded line guesses | **In-Sandbox AST Context Engine** (`context_engine.py`) with call-graph ranking |
-| **Test Integrity** | Unconstrained file edits | **Anti-Reward-Hacking Policy** prohibiting edits to `test_*.py` and `tests/*` |
-| **Execution Isolation** | Mutates a single working tree | **Contree OCI Checkpointing & Copy-on-Write Forking** |
-| **Flakiness Detection** | Assumes 1 green run = deterministic fix | **5-Fork Parallel Stability Forensics** (5/5 passes required) |
-| **Edge-Case Hardening** | None | **2-Fork Adversarial Red-Teaming** (synthesizes new boundary `pytest` suites) |
-| **Failure Recovery** | Blind retries with the same prompt | **Nemotron 3 Ultra (550B) Escalation** across all prior diffs and failure traces |
-| **Deliverable** | Unverified diff | **Verified Unified Diff + Weighted Confidence Score + Executive Audit Report** |
+| **Hypothesis Exploration** | Sequential, single-strategy retries | **4-Branch Concurrent Search** across distinct repair strategies (Minimal Surgical, Defensive Boundary, Upstream Root-Cause, Test-Driven Contract) |
+| **Source Context** | Raw file dumps or ungrounded line guesses | **In-Sandbox AST Context Engine** (`context_engine.py`) with line-level call-graph resolution |
+| **Test Integrity** | Unconstrained file edits | **Anti-Reward-Hacking Policy**: code modifications restricted to non-test source files (`test_*.py` and `tests/*` are read-only) |
+| **Execution Isolation** | Mutates a single working tree | **Contree OCI Checkpointing & Copy-on-Write Forking** with git-level filesystem snapshotting |
+| **Flakiness Detection** | Assumes 1 green run = deterministic fix | **5-Fork Parallel Stability Forensics** (5/5 passes required to eliminate flaky flukes) |
+| **Edge-Case Hardening** | None | **2-Fork Adversarial Red-Teaming** (synthesizes new boundary `pytest` suites to verify resilience) |
+| **Failure Recovery** | Blind retries with the same prompt | **Nemotron 3 Ultra (550B) Escalation** analyzing all prior failed diffs and tracebacks |
+| **Deliverable** | Unverified diff | **Verified Unified Diff + Weighted Confidence Score + Executive Audit Report + One-Click `.patch` Download** |
 
 ---
 
@@ -107,9 +147,11 @@ flowchart LR
 
 ---
 
-## NVIDIA Nemotron & Nebius Token Factory Integration
+## NVIDIA Nemotron 3 & Nebius Token Factory Integration
 
 > *Built for the **Nebius x NVIDIA Global AI Hackathon** — **Coding and Agentic Engineering Track**.*
+
+PatchTree leverages the **NVIDIA Nemotron 3 model family** (Nano 30B, Super 120B, Ultra 550B) hosted on **Nebius Token Factory** to implement cost-aware tiered routing across the verification pipeline.
 
 ### 1. Sandbox Forking & Model Routing Topology
 
@@ -151,23 +193,103 @@ flowchart TD
 
 ### 2. Tiered Model Routing & Token Economics (`Backend/app/llm/router.py`)
 
-By routing high-volume tasks to **Nemotron 3 Nano** and **Super** over persistent HTTP/2 connections and reserving **Nemotron 3 Ultra** strictly for escalation and final auditing, PatchTree keeps average full-pipeline token costs between **$0.004 and $0.04 per run**:
+By routing high-volume tasks to **Nemotron 3 Nano (30B)** and **Super (120B)** over persistent HTTP/2 connections and reserving **Nemotron 3 Ultra (550B)** strictly for escalation and final auditing, PatchTree maintains average full-pipeline token costs between **$0.004 and $0.04 per run**:
 
 | Tier | Model Identifier on Nebius Token Factory | Pricing (per 1M tokens) | Assigned Pipeline Jobs | Default Temp |
 |---|---|---|---|---|
 | **Nano** | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | `$0.10` | `generate_patch_minimal`, `generate_patch_test_driven` | `0.2` |
 | **Super** | `nvidia/nemotron-3-super-120b-a12b` | `$0.35` | `generate_patch_alternative`, `generate_patch_root_cause`, `generate_adversarial_test` | `0.5` – `0.6` |
-| **Ultra** | `nvidia/Nemotron-3-Ultra-550b-a55b` | `$1.20` | `generate_patch_ultra`, `replan_after_failure`, `generate_confidence_report` | `0.2` – `0.3` |
+| **Ultra** | `nvidia/Nemotron-3-Ultra-550b-a55b` | `$1.20` | `ultra_synthesize_patch`, `replan_after_failure`, `generate_confidence_report` | `0.2` – `0.3` |
+
+**Cost Efficiency:** A typical run invoking 4 search branches (2 Nano + 2 Super), 5 stability forks (sandbox-only, no LLM), 2 adversarial generators (Super), and 1 Ultra audit report costs approximately **$0.008–$0.015** in total LLM inference.
 
 ### 3. Weighted Confidence Score Calculation
 
-```text
-# When full_suite_test is provided:
-confidence_score = 0.40 * (stability_passes / 5) + 0.40 * (adversarial_survived / 2) + 0.20 * full_suite_pass
+After all verification stages complete, PatchTree computes a weighted confidence percentage:
+
+```python
+# When full_suite_test is provided (full-suite regression enabled):
+confidence_score = (
+    0.40 * (stability_passes / 5) +           # 40% weight: deterministic stability
+    0.40 * (adversarial_survived / 2) +       # 40% weight: boundary resilience
+    0.20 * (1.0 if full_suite_pass else 0.0)  # 20% weight: zero regressions
+)
 
 # When full_suite_test is omitted (targeted test mode):
-confidence_score = 0.50 * (stability_passes / 5) + 0.50 * (adversarial_survived / 2)
+confidence_score = (
+    0.50 * (stability_passes / 5) +           # 50% weight: deterministic stability
+    0.50 * (adversarial_survived / 2)         # 50% weight: boundary resilience
+)
 ```
+
+A score of **100%** indicates the patch passed all 5 stability forks, survived all 2 adversarial attacks, and (if enabled) passed the full repository test suite with zero regressions.
+
+---
+
+## Interactive Mission Control UI
+
+PatchTree's frontend is built with **React 19 + TypeScript + Vite** and provides a production-grade Mission Control interface for real-time visualization and telemetry:
+
+### Key Features
+
+- **Interactive React Flow DAG Visualization:** Renders every speculative sandbox fork, phase transition, and node state in real time as an animated directed acyclic graph. Nodes update live as sandboxes transition through `pending → running → passed/failed` states.
+
+- **Full Node Inspector & Diff Telemetry:** Click any node to open a slide-over drawer exposing:
+  - **Unified Diff View:** Syntax-highlighted `@@ -start,count +start,count @@` hunks with line-by-line additions/deletions
+  - **Terminal Execution Output:** Raw `stdout`/`stderr` from `pytest` execution, `git apply`, and sandbox commands
+  - **Token Consumption & Wall Time:** Exact token counts per LLM call and execution duration per node
+
+- **Confidence Report & Audit Modal:** After pipeline completion, generates an actionable post-mortem report including:
+  - Weighted confidence percentage (`stability_passes / 5 * 0.5 + adversarial_survived / 2 * 0.5`)
+  - Stability metrics (5/5 deterministic pass gauge)
+  - Adversarial attack results (boundary value resilience)
+  - One-click `.patch` file download for immediate `git apply`
+  - Executive summary authored by **Nemotron 3 Ultra (550B)**
+
+- **Pre-Loaded Benchmark Launchpad:** Quick-fill templates for three curated real-world scenarios (see [Curated Benchmark Scenarios](#curated-benchmark-scenarios) below)
+
+- **Production Deployment:** Hosted on Vercel with resilient backend proxying to Render, supporting WebSocket-like long-polling for sub-second node updates
+
+### Architecture
+
+```text
+Frontend (React 19 + TypeScript + Vite)
+├── React Flow Canvas (DAG tree rendering)
+├── TopBar (repo breadcrumb, pipeline stage ribbon, cost telemetry)
+├── Launchpad (benchmark scenario selector, custom repo input)
+├── PNode (custom React Flow node cards with stability bars)
+├── ParticleEdge (animated SVG edges for active execution paths)
+├── NodeInspector (slide-over drawer for diffs, logs, metrics)
+├── ReportModal (confidence gauge, Markdown audit viewer, .patch download)
+└── NewRunModal (run submission with quick-fill templates)
+```
+
+---
+
+## Curated Benchmark Scenarios
+
+For the convenience of hackathon judges and live demo evaluations, **pre-loaded real-world benchmark examples** are integrated directly into the Web UI Launchpad. These scenarios demonstrate PatchTree's capabilities across different bug classes and model tiers:
+
+### 1. **E-Commerce Volume Discount Bug** (`noshaeec/checkout-pricing-suite`)
+- **Bug Class:** Off-by-one boundary condition (`>` vs `>=` in volume discount threshold)
+- **Model Tier:** Resolved by **Nemotron 3 Nano (30B)** in Branch 1 (Minimal Surgical Fix)
+- **Execution Time:** ~58 seconds
+- **Token Cost:** <$0.01
+- **Demonstrates:** Zero-LLM early-stop validation, AST context slicing, single-hunk surgical repair
+
+### 2. **Task Management API Crash** (`GHOST4709/BackendTestRun`)
+- **Bug Class:** Unhandled `ZeroDivisionError` in empty-workspace calculation
+- **Model Tier:** Resolved by **Nemotron 3 Super (120B)** in Branch 2 (Defensive Guard Path)
+- **Demonstrates:** Defensive boundary validation, 5-fork stability forensics, adversarial red-teaming with edge-case synthesis
+
+### 3. **Traffic Law Microservice** (`GHOST4709/drivelegal`)
+- **Bug Class:** Multi-file state inconsistency requiring upstream root-cause analysis
+- **Model Tier:** Required **Nemotron 3 Ultra (550B)** escalation after all 4 initial branches failed
+- **Demonstrates:** Multi-trace synthesis across failed diffs, wide AST context window expansion, full-suite regression verification
+
+**Beyond Benchmarks:** PatchTree's pipeline has been battle-tested across multiple external production codebases and real-world FastAPI/Flask repositories to empirically validate multi-file context discovery, git-level patch application, and regression-free test passes.
+
+**For Judges:** Click **"Load"** on any benchmark scenario to instantly explore a complete 13-node execution tree, or paste any arbitrary public Python GitHub repository URL into the **"+ New Run"** modal to trigger a live cloud sandbox verification.
 
 ---
 
@@ -212,27 +334,45 @@ PatchTree/
 
 ---
 
-## Getting Started
+## Quickstart for Judges & Developers
 
 PatchTree is built as an **open-source verification engine** that can be evaluated either via the **hosted web workbench** (for immediate hackathon judging) or **self-hosted locally** with your own API keys.
 
 ### 1. Hosted Web Workbench (Zero-Setup Evaluation for Judges)
 
-1. Open the hosted deployment URL from the Devpost submission page.
-2. **Instant Benchmark Replay (`$0.00` cost):** Select any of the three benchmark scenarios on the Launchpad (*Discount Bug · Nano 30B*, *Flaky Test Isolation · Super 120B*, or *Hard Bug · Ultra 550B*) to inspect the verification architecture or explore a complete 13-node execution tree immediately.
-3. **Live Cloud Sandbox Execution (`+ New Run`):** Click **+ New Run** in the top navigation bar, enter a public Python GitHub repository URL (`https://github.com/owner/repo`), bug description, and `pytest` command, and watch the Contree sandboxes and Nemotron models execute live.
+**Recommended for hackathon judges and immediate evaluation.**
 
-### 2. Local Installation (Bring Your Own Key or Offline Simulation Mode)
+1. **Access the Live Demo:** Open the hosted deployment URL from the Devpost submission page (deployed on Vercel)
+
+2. **Instant Benchmark Replay (`$0.00` Cost):**
+   - On the Launchpad, select any of the three curated benchmark scenarios:
+     - **E-Commerce Discount Bug** (*Nano 30B surgical fix, ~58s, <$0.01*)
+     - **Task API Crash** (*Super 120B defensive guards + stability forensics*)
+     - **Traffic Law Microservice** (*Ultra 550B escalation + full-suite regression*)
+   - Click **"Load"** to instantly inspect a complete 13-node execution tree with diffs, logs, and telemetry
+   - Explore the architecture: click nodes to view unified diffs, pytest output, token consumption, and wall times
+
+3. **Live Cloud Sandbox Execution (`+ New Run`):**
+   - Click **"+ New Run"** in the top navigation bar
+   - Enter a public Python GitHub repository URL (e.g., `https://github.com/owner/repo`)
+   - Provide a bug description and `pytest` command (e.g., `pytest tests/test_checkout.py::test_volume_discount`)
+   - Watch Contree sandboxes and Nemotron models execute the 6-stage pipeline live
+   - Monitor the React Flow DAG as nodes transition through `pending → running → passed/failed` states in real time
+
+### 2. Local Installation (Self-Hosted with Your Own Keys)
+
+**For developers who want to run PatchTree locally or integrate it into their own workflows.**
 
 #### Prerequisites
-- **Python 3.11+** and **Node.js 18+**
-- **Nebius Token Factory API Key** (`NEBIUS_API_KEY`) and **Contree Project ID** (`NEBIUS_PROJECT_ID`) for live cloud microVM execution.
-  *(Note: If credentials are omitted, PatchTree automatically falls back to deterministic local simulation mode so the full 13-node pipeline and UI can be tested offline at `$0.00` cost.)*
+- **Python 3.10–3.13+** and **Node.js 18+**
+- **Nebius Token Factory API Key** (`NEBIUS_API_KEY`) and **Contree Project ID** (`NEBIUS_PROJECT_ID`) for live cloud microVM execution
+  
+  *(Note: If credentials are omitted, PatchTree automatically falls back to **deterministic local simulation mode** so the full 13-node pipeline and UI can be tested offline at `$0.00` cost with synthetic execution traces.)*
 
 #### Step 1 — Start the Backend API (`http://localhost:8000`)
 
 ```bash
-git clone https://github.com/icodesAS/PatchTree.git
+git clone https://github.com/your-org/PatchTree.git
 cd PatchTree/Backend
 
 python -m venv venv
@@ -268,6 +408,8 @@ Launch the FastAPI server:
 uvicorn app.main:app --reload --port 8000
 ```
 
+Interactive OpenAPI documentation will be available at `http://localhost:8000/docs`.
+
 #### Step 2 — Start the Frontend UI (`http://localhost:5173`)
 
 ```bash
@@ -276,7 +418,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser. Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
+Open `http://localhost:5173` in your browser. The UI will connect to the local backend at `http://localhost:8000`.
 
 #### Step 3 — Run the Test Suite
 
@@ -295,13 +437,80 @@ RUN_LIVE_SMOKE=1 python -m pytest tests/test_contree.py tests/test_nebius.py -q
 
 ---
 
-## Configuration & Cost Guardrails
+## Tech Stack & Cloud Infrastructure
 
-When deployed publicly (e.g., on Render or Railway), PatchTree enforces multi-layer cost and abuse controls:
+PatchTree is built on a modern, production-grade technology stack optimized for cost efficiency, execution isolation, and real-time visualization:
 
-- **Zero-LLM Early Halt:** Repository clone errors, missing dependency manifests (`requirements.txt`, `pyproject.toml`, `setup.py`), `pytest` collection errors, or tests that already pass on the clean repository (`exit_code == 0`) abort immediately at the Root Node before any Nebius Token Factory call is made.
+### Backend Architecture
+
+| Component | Technology | Purpose |
+|---|---|---|
+| **Application Framework** | Python 3.11+, FastAPI, Pydantic v2 | Async REST API, request validation, type-safe schemas |
+| **Concurrency Runtime** | AnyIO + asyncio | Async orchestration, parallel sandbox forking |
+| **Database & Persistence** | Hosted Supabase (PostgreSQL) + in-memory fallback | Run metadata storage, node state persistence |
+| **LLM Inference Engine** | NVIDIA Nemotron 3 Family (Nano 30B, Super 120B, Ultra 550B) | Tiered model routing for cost-optimized repair generation |
+| **Inference Gateway** | Nebius Token Factory (HTTP/2 streaming) | Unified OpenAI-compatible endpoints with transparent model routing |
+| **Execution Sandboxes** | Nebius Contree (OCI Linux microVMs) | Copy-on-write filesystem checkpointing, git-level isolation |
+| **Code Context Analysis** | Custom AST Parser (`context_engine.py`) | Stack-trace analyzer, call-graph resolver, context budget packer |
+
+### Frontend Architecture
+
+| Component | Technology | Purpose |
+|---|---|---|
+| **UI Framework** | React 19, TypeScript | Type-safe component architecture, modern hooks API |
+| **Build Tool** | Vite | Sub-second HMR, optimized production builds |
+| **DAG Visualization** | React Flow | Interactive node graph canvas, custom node/edge rendering |
+| **State Management** | React hooks (`useState`, `useEffect`, `useMemo`) | Local state, API polling, derived computations |
+| **Icons & UI Kit** | Lucide Icons | Consistent vector iconography |
+| **Styling** | CSS Modules + `patchtree-hud.css` | Mission Control HUD theme, terminal aesthetics |
+
+### Cloud Infrastructure & Deployment
+
+| Service | Platform | Purpose |
+|---|---|---|
+| **Frontend Hosting** | Vercel | Static asset CDN, edge routing, sub-100ms TTFB |
+| **Backend Hosting** | Render | Managed Python container, auto-scaling, health checks |
+| **Database** | Supabase (hosted PostgreSQL) | Persistent run metadata, node state snapshots |
+| **Sandboxes** | Nebius Contree | Isolated copy-on-write Linux microVMs with git checkpointing |
+| **LLM Inference** | Nebius Token Factory | HTTP/2 streaming to NVIDIA Nemotron 3 ensemble |
+
+### Cost Optimization & Token Economics
+
+By routing high-volume tasks to **Nemotron 3 Nano (30B)** and **Super (120B)** over persistent HTTP/2 connections and reserving **Nemotron 3 Ultra (550B)** strictly for escalation and final auditing, PatchTree maintains average full-pipeline token costs between **$0.004 and $0.04 per run**:
+
+| Tier | Model on Nebius Token Factory | Pricing (per 1M tokens) | Pipeline Jobs | Default Temp |
+|---|---|---|---|---|
+| **Nano** | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | `$0.10` | Minimal surgical fixes, test-driven contracts | `0.2` |
+| **Super** | `nvidia/nemotron-3-super-120b-a12b` | `$0.35` | Defensive guards, root-cause analysis, adversarial synthesis | `0.5` – `0.6` |
+| **Ultra** | `nvidia/Nemotron-3-Ultra-550b-a55b` | `$1.20` | Multi-trace escalation, replanning, confidence reports | `0.2` – `0.3` |
+
+---
+
+## Security, Isolation & Anti-Cheating Guardrails
+
+PatchTree enforces multiple layers of security and integrity protections to prevent test corruption, resource exhaustion, and malicious execution:
+
+### Sandboxed Execution Isolation
+
+- **Nebius Contree OCI Containers:** Every repair attempt executes in a disposable, copy-on-write Linux microVM with no access to the host filesystem, network APIs, or sibling sandboxes.
+- **Checkpoint-Based Forking:** All speculative branches fork from immutable checkpoints (`checkpoint_id = image.checkpoint()`), preventing cross-contamination between concurrent search paths.
+- **Resource Limits:** Each sandbox enforces CPU, memory, and wall-time quotas to prevent runaway processes or fork bombs.
+
+### Read-Only Test Policy (Anti-Reward-Hacking)
+
+- **Test File Write Protection:** PatchTree's prompt engineering and post-generation validation explicitly prohibit modifications to:
+  - Files matching `test_*.py`, `*_test.py`
+  - Any file under `tests/`, `test/`, `__tests__/` directories
+- **Diff Validation:** Before applying any patch, `pipeline.py` parses the unified diff headers and rejects patches targeting test files with an explicit failure reason.
+
+### Cost & Abuse Controls
+
+When deployed publicly (e.g., on Render or Vercel), PatchTree enforces multi-layer protections:
+
+- **Zero-LLM Early Halt:** Repository clone errors, missing dependency manifests (`requirements.txt`, `pyproject.toml`, `setup.py`), `pytest` collection errors, or tests that already pass (`exit_code == 0`) abort immediately at the Root Node before any Nebius Token Factory call is made (`$0.00` cost).
 - **Per-Run LLM Circuit Breaker:** Each run is hard-capped at a maximum of 8 LLM calls (4 search branches + 1 optional Ultra synthesis + 2 adversarial generators + 1 confidence report).
-- **Concurrency & Rate Limiting:** Enforces `MAX_CONCURRENT_RUNS` in-flight locks, per-IP request rate limits, and daily run caps (`MAX_DAILY_RUNS`) to prevent automated credit exhaustion.
+- **Concurrency Locks:** Enforces `MAX_CONCURRENT_RUNS` in-flight run limits per backend instance.
+- **Rate Limiting:** Per-IP request throttling (10 requests/minute) and daily run caps (`MAX_DAILY_RUNS=50`) to prevent automated credit exhaustion.
 
 ---
 
