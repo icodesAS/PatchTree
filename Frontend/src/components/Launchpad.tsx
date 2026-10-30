@@ -3,7 +3,6 @@ import { GitBranch, ChevronRight } from 'lucide-react';
 import type { Run } from '../types';
 import { listRuns } from '../api';
 import { mockData } from '../mockData';
-import TierTag from './TierTag';
 import { PRESETS, type PresetDef } from '../presets';
 
 
@@ -140,7 +139,7 @@ export default function Launchpad({
               <h2 id="examples-heading" className="section-title">
                 Examples
               </h2>
-              <span className="section-hint">Load one to fill in the form</span>
+              <span className="section-hint">Select a verified benchmark repository</span>
             </div>
 
             <div className="examples-list" role="list">
@@ -160,8 +159,8 @@ export default function Launchpad({
                 >
                   <span className="examples-row__name">{p.title}</span>
                   <span className="examples-row__desc">{p.desc}</span>
-                  <span className="examples-row__tier">
-                    <TierTag tier={p.tier} />
+                  <span className="examples-row__test">
+                    <span className="test-badge mono">{p.testRunner}</span>
                   </span>
                   <span className="examples-row__cost mono num">{p.cost}</span>
                   <span className="examples-row__action">

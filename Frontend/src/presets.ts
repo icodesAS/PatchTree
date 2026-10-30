@@ -1,6 +1,6 @@
 export interface PresetDef {
   id: string;
-  tier: 'nano' | 'super' | 'ultra';
+  testRunner: string;
   title: string;
   desc: string;
   cost: string;
@@ -12,10 +12,10 @@ export interface PresetDef {
 
 export const PRESETS: PresetDef[] = [
   {
-    id: 'discount',
-    tier: 'nano',
-    title: 'Discount bug',
-    desc: 'Volume discount off-by-one boundary check (> vs >=). Fast surgical fix.',
+    id: 'checkout',
+    testRunner: 'pytest',
+    title: 'checkout-pricing-suite',
+    desc: 'Volume discount threshold boundary check (> vs >=)',
     cost: '$0.007',
     repo: 'https://github.com/noshaeec/checkout-pricing-suite',
     bugDesc:
@@ -24,25 +24,27 @@ export const PRESETS: PresetDef[] = [
     fullSuiteCmd: 'pytest --runxfail tests/test_discounts.py tests/test_items.py',
   },
   {
-    id: 'flaky',
-    tier: 'super',
-    title: 'Flaky test',
-    desc: 'A timer race passes sometimes. Five repeat runs isolate the failure.',
-    cost: '$0.01',
-    repo: 'https://github.com/example/math-service',
-    bugDesc: 'compute_average() crashes on empty list with ZeroDivisionError',
-    testCmd: 'pytest tests/test_math.py::test_average_empty',
-    fullSuiteCmd: '',
+    id: 'backendtest',
+    testRunner: 'pytest',
+    title: 'BackendTestRun',
+    desc: 'Summary metrics and velocity calculation crash on empty workspace',
+    cost: '$0.005',
+    repo: 'https://github.com/GHOST4709/BackendTestRun',
+    bugDesc:
+      'Summary metrics and velocity calculation crashes when workspace has zero tasks',
+    testCmd: 'pytest test.py',
+    fullSuiteCmd: 'pytest test.py',
   },
   {
-    id: 'multifile',
-    tier: 'ultra',
-    title: 'Hard bug',
-    desc: 'Small models fail the first round. The run escalates to Ultra.',
-    cost: '$0.05',
-    repo: 'https://github.com/example/auth-service',
-    bugDesc: 'JWT token verification fails across token validator and session cache under key rotation',
-    testCmd: 'pytest tests/test_auth.py::test_key_rotation',
-    fullSuiteCmd: 'pytest tests/',
+    id: 'drivelegal',
+    testRunner: 'pytest',
+    title: 'drivelegal',
+    desc: 'Bearer JWT token authentication claim lookup mismatch',
+    cost: '$0.012',
+    repo: 'https://github.com/GHOST4709/drivelegal',
+    bugDesc:
+      'Current user authentication endpoint fails to resolve user profile from Bearer token claims',
+    testCmd: 'pytest Backend/test.py',
+    fullSuiteCmd: 'pytest Backend/test.py',
   },
 ];

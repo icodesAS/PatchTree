@@ -6,7 +6,7 @@ import { getApiBaseUrl } from '../api';
 const EXAMPLES: { id: string; label: string; data: RunCreate }[] = [
   {
     id: 'checkout',
-    label: 'Checkout pricing suite (boundary > vs >=)',
+    label: 'noshaeec/checkout-pricing-suite (Volume discount boundary)',
     data: {
       repo_url: 'https://github.com/noshaeec/checkout-pricing-suite',
       bug_description:
@@ -16,24 +16,25 @@ const EXAMPLES: { id: string; label: string; data: RunCreate }[] = [
     },
   },
   {
-    id: 'math',
-    label: 'Math service (ZeroDivisionError)',
+    id: 'backendtest',
+    label: 'GHOST4709/BackendTestRun (Metrics calculation on empty workspace)',
     data: {
-      repo_url: 'https://github.com/example/math-service',
-      bug_description: 'compute_average() crashes on empty list with ZeroDivisionError',
-      target_test: 'pytest tests/test_math.py::test_average_empty',
-      full_suite_test: '',
+      repo_url: 'https://github.com/GHOST4709/BackendTestRun',
+      bug_description:
+        'Summary metrics and velocity calculation crashes when workspace has zero tasks',
+      target_test: 'pytest test.py',
+      full_suite_test: 'pytest test.py',
     },
   },
   {
-    id: 'auth',
-    label: 'Auth service (key rotation multi-file bug)',
+    id: 'drivelegal',
+    label: 'GHOST4709/drivelegal (JWT Bearer token lookup mismatch)',
     data: {
-      repo_url: 'https://github.com/example/auth-service',
+      repo_url: 'https://github.com/GHOST4709/drivelegal',
       bug_description:
-        'JWT token verification fails across token validator and session cache under key rotation',
-      target_test: 'pytest tests/test_auth.py::test_key_rotation',
-      full_suite_test: 'pytest tests/',
+        'Current user authentication endpoint fails to resolve user profile from Bearer token claims',
+      target_test: 'pytest Backend/test.py',
+      full_suite_test: 'pytest Backend/test.py',
     },
   },
 ];

@@ -743,7 +743,7 @@ kbd {
   min-height: 56px;
   padding: 0 16px;
   display: grid;
-  grid-template-columns: 140px 1fr 96px 64px 72px;
+  grid-template-columns: 180px 1fr 80px 60px 64px;
   align-items: center;
   gap: 16px;
   border-bottom: 1px solid var(--border);
@@ -774,9 +774,25 @@ kbd {
   white-space: nowrap;
 }
 
+.examples-row__test,
 .examples-row__tier {
   display: flex;
   align-items: center;
+}
+
+.test-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
 .examples-row__cost {
@@ -2066,6 +2082,7 @@ kbd {
     white-space: normal;
   }
 
+  .examples-row__test,
   .examples-row__tier {
     grid-column: 1;
     grid-row: 3;
