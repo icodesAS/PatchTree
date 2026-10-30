@@ -134,7 +134,7 @@ class SandboxManager:
                 if not cmd.startswith("cat <<") and not cmd.startswith("git clone"):
                     exec_cmd = (
                         'export PIP_BREAK_SYSTEM_PACKAGES=1; '
-                        'export PYTHONPATH="/app:/app/Backend:/app/backend:/app/src:$PYTHONPATH"; '
+                        'export PYTHONPATH="/app:/app/Backend:/app/backend:/app/src:$(find /app -mindepth 1 -maxdepth 2 -type d ! -path \'*/.*\' ! -path \'*/tests*\' ! -path \'*/venv*\' ! -path \'*/__pycache__*\' 2>/dev/null | tr \'\\n\' \':\'):$PYTHONPATH"; '
                         f'if [ -d /app ]; then cd /app; fi; {cmd}'
                     )
 

@@ -6,7 +6,7 @@ import { getApiBaseUrl } from '../api';
 const EXAMPLES: { id: string; label: string; data: RunCreate }[] = [
   {
     id: 'checkout',
-    label: 'Checkout pricing suite',
+    label: 'Checkout pricing suite (boundary > vs >=)',
     data: {
       repo_url: 'https://github.com/noshaeec/checkout-pricing-suite',
       bug_description:
@@ -26,13 +26,14 @@ const EXAMPLES: { id: string; label: string; data: RunCreate }[] = [
     },
   },
   {
-    id: 'pricing',
-    label: 'Pricing calculator (discount off by one)',
+    id: 'auth',
+    label: 'Auth service (key rotation multi-file bug)',
     data: {
-      repo_url: 'https://github.com/example/pricing-service',
-      bug_description: 'calculate_discount() returns negative value when discount_pct > 100',
-      target_test: 'pytest tests/test_discount.py::test_calculate_discount',
-      full_suite_test: '',
+      repo_url: 'https://github.com/example/auth-service',
+      bug_description:
+        'JWT token verification fails across token validator and session cache under key rotation',
+      target_test: 'pytest tests/test_auth.py::test_key_rotation',
+      full_suite_test: 'pytest tests/',
     },
   },
 ];

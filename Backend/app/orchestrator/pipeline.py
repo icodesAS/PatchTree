@@ -240,7 +240,10 @@ def reproduce(run: Run, sandbox: SandboxManager) -> Node:
                 )
 
         # Discover and install dependencies from requirements.txt, pyproject.toml, or setup.py
-        sandbox.run_command('export PYTHONPATH="/app:/app/Backend:/app/src:$PYTHONPATH"')
+        sandbox.run_command(
+            'export PYTHONPATH="/app:/app/Backend:/app/backend:/app/src:'
+            '$(find /app -mindepth 1 -maxdepth 2 -type d ! -path \'*/.*\' ! -path \'*/tests*\' ! -path \'*/venv*\' ! -path \'*/__pycache__*\' 2>/dev/null | tr \'\\n\' \':\'):$PYTHONPATH"'
+        )
         find_req = sandbox.run_command("find /app -name '*requirements*.txt' -o -name 'requirements.txt' 2>/dev/null | head -n 1")
         req_path = find_req.output.strip().splitlines()[0] if find_req.output.strip() else ""
 
