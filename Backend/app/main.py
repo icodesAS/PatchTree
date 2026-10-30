@@ -164,10 +164,10 @@ async def create_run(request: RunCreate, background_tasks: BackgroundTasks, http
             status_code=422,
             detail="Both bug_description and target_test must be non-empty.",
         )
-    if len(bug_desc) > 2000 or len(target_cmd) > 300 or len(suite_cmd) > 300:
+    if len(bug_desc) > 2000 or len(target_cmd) > 2000 or len(suite_cmd) > 2000:
         raise HTTPException(
             status_code=422,
-            detail="Input payload exceeds maximum allowed character length (bug_description <= 2000, test command <= 300).",
+            detail="Input payload exceeds maximum allowed character length (bug_description <= 2000, test command <= 2000).",
         )
 
     # ── Protection 1: Active In-Flight Concurrency Lock ──

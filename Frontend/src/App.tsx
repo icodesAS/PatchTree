@@ -388,6 +388,15 @@ export default function App() {
         const isOnline = await checkHealth();
         setOfflineBanner(!isOnline);
         const errMsg = err instanceof Error ? err.message : 'Failed to start verification run.';
+        setRun({
+          run_id: 'dispatch-failed',
+          repo_url: payload.repo_url,
+          bug_description: payload.bug_description,
+          target_test: payload.target_test,
+          full_suite_test: payload.full_suite_test,
+          status: 'failed',
+          created_at: new Date().toISOString(),
+        });
         setPatchNodes((prev) =>
           prev.map((n) =>
             n.node_id === 'root-init'

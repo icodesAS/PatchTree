@@ -94,15 +94,22 @@ export default function NewRunModal({ onSubmit, onClose, backendOnline, initialV
     : null;
   const bugError = touched.bug && !form.bug_description.trim()
     ? 'Add a short description so the models know what to fix.'
+    : form.bug_description.length > 2000
+    ? 'Description exceeds maximum length of 2000 characters.'
     : null;
   const testError = touched.test && !form.target_test.trim()
     ? 'Add the command that fails.'
+    : form.target_test.length > 2000
+    ? 'Command exceeds maximum length of 2000 characters.'
     : null;
 
   const isValid =
     repoCheck.valid &&
     Boolean(form.bug_description.trim()) &&
-    Boolean(form.target_test.trim());
+    form.bug_description.length <= 2000 &&
+    Boolean(form.target_test.trim()) &&
+    form.target_test.length <= 2000 &&
+    (form.full_suite_test ?? '').length <= 2000;
 
   const handleSubmit = () => {
     setTouched({ repo: true, bug: true, test: true });
