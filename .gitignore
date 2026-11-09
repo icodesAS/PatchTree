@@ -32,3 +32,6 @@ docs/
 # Archives
 *.zip
 *.tar.gz
+
+# Submission assets
+submission_assets/

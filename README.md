@@ -22,7 +22,7 @@
   <a href="#architecture--verification-pipeline">Architecture</a> ·
   <a href="#interactive-mission-control-ui">Mission Control UI</a> ·
   <a href="#curated-benchmark-scenarios">Benchmark Scenarios</a> ·
-  <a href="#quickstart-for-judges--developers">Quickstart</a> ·
+  <a href="#quickstart">Quickstart</a> ·
   <a href="#tech-stack--cloud-infrastructure">Tech Stack</a> ·
   <a href="./LICENSE">License</a>
 </p>
@@ -149,7 +149,7 @@ flowchart LR
 
 ## NVIDIA Nemotron 3 & Nebius Token Factory Integration
 
-> *Built for the **Nebius x NVIDIA Global AI Hackathon** — **Coding and Agentic Engineering Track**.*
+> *Engineered with tiered **NVIDIA Nemotron 3** models, **Nebius Token Factory**, and **Contree Sandboxes**.*
 
 PatchTree leverages the **NVIDIA Nemotron 3 model family** (Nano 30B, Super 120B, Ultra 550B) hosted on **Nebius Token Factory** to implement cost-aware tiered routing across the verification pipeline.
 
@@ -268,7 +268,7 @@ Frontend (React 19 + TypeScript + Vite)
 
 ## Curated Benchmark Scenarios
 
-For the convenience of hackathon judges and live demo evaluations, **pre-loaded real-world benchmark examples** are integrated directly into the Web UI Launchpad. These scenarios demonstrate PatchTree's capabilities across different bug classes and model tiers:
+For instant zero-setup evaluation, **pre-loaded real-world benchmark examples** are integrated directly into the Web UI Launchpad. These scenarios demonstrate PatchTree's capabilities across different bug classes and model tiers:
 
 ### 1. **E-Commerce Volume Discount Bug** (`noshaeec/checkout-pricing-suite`)
 - **Bug Class:** Off-by-one boundary condition (`>` vs `>=` in volume discount threshold)
@@ -289,7 +289,7 @@ For the convenience of hackathon judges and live demo evaluations, **pre-loaded 
 
 **Beyond Benchmarks:** PatchTree's pipeline has been battle-tested across multiple external production codebases and real-world FastAPI/Flask repositories to empirically validate multi-file context discovery, git-level patch application, and regression-free test passes.
 
-**For Judges:** Click **"Load"** on any benchmark scenario to instantly explore a complete 13-node execution tree, or paste any arbitrary public Python GitHub repository URL into the **"+ New Run"** modal to trigger a live cloud sandbox verification.
+**Quick Evaluation:** Click **"Load"** on any benchmark scenario to instantly explore a complete 13-node execution tree, or paste any arbitrary public Python GitHub repository URL into the **"+ New Run"** modal to trigger a live cloud sandbox verification.
 
 ---
 
@@ -334,15 +334,15 @@ PatchTree/
 
 ---
 
-## Quickstart for Judges & Developers
+## Quickstart
 
-PatchTree is built as an **open-source verification engine** that can be evaluated either via the **hosted web workbench** (for immediate hackathon judging) or **self-hosted locally** with your own API keys.
+PatchTree is built as an **open-source verification engine** that can be evaluated either via the **hosted web workbench** or **self-hosted locally** with your own API keys.
 
-### 1. Hosted Web Workbench (Zero-Setup Evaluation for Judges)
+### 1. Hosted Web Workbench (Zero-Setup Evaluation)
 
-**Recommended for hackathon judges and immediate evaluation.**
+**Recommended for immediate evaluation without local setup.**
 
-1. **Access the Live Demo:** Open the hosted deployment URL from the Devpost submission page (deployed on Vercel)
+1. **Access the Live Demo:** Open the hosted deployment on Vercel: [patch-tree.vercel.app](https://patch-tree.vercel.app)
 
 2. **Instant Benchmark Replay (`$0.00` Cost):**
    - On the Launchpad, select any of the three curated benchmark scenarios:
@@ -788,7 +788,7 @@ For microservice patches affecting API contracts (e.g., changing a REST response
 
 ## Summary: From Workbench to Production Infrastructure
 
-These five strategic investments transform PatchTree from a **hackathon proof-of-concept** into a **production-grade autonomous repair infrastructure**:
+These five strategic investments transform PatchTree from an **interactive workbench prototype** into a **production-grade autonomous repair infrastructure**:
 
 | Capability | Current State (v1.0) | Future State |
 |---|---|---|
@@ -802,9 +802,7 @@ The roadmap prioritizes **systemic correctness** (mutation kill scores, cross-se
 
 ---
 
-## Platform Feedback: Nebius Token Factory, Contree & NVIDIA Nemotron
-
-*(Provided per hackathon submission guidelines)*
+## Infrastructure & Architectural Retrospective
 
 1. **Nebius Token Factory:**
    - **Strengths:** Unified OpenAI-compatible endpoints across the **NVIDIA Nemotron 3** family (`Nano 30B`, `Super 120B`, `Ultra 550B`) made building a cost-aware model router straightforward. Routing initial search branches to Nano (`$0.10/1M`) and Super (`$0.35/1M`) while reserving Ultra (`$1.20/1M`) for cross-branch failure synthesis reduced per-run inference costs by ~80%.
